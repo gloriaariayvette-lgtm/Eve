@@ -1,0 +1,22 @@
+[project]
+name = "eve-avatar-engine"
+version = "0.1.0"
+description = "Avatar motion engine — LLM text to full-body motion with gaze, micro-expressions, and spatial anchoring"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "websockets>=13.0",
+    "openai>=1.50.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.5.0",
+    "numpy>=1.26.0",
+]
+
+[project.optional-dependencies]
+tts = ["piper-tts>=1.2.0"]
+dev = ["ruff>=0.7.0", "pytest>=8.0.0"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
