@@ -7,13 +7,16 @@
  * 3. WebSocket connection to Eve server
  * 4. 60fps animation loop driving all avatar subsystems
  * 5. UI for text input and status display
+ * 6. Performance monitoring with adaptive quality (Phase 5)
+ * 7. Debug display for Phase 4 state (dialogue, rapport, arc)
  */
 
 import { createScene } from './scene/setup';
 import { AvatarLoader } from './avatar/loader';
-import { AvatarController } from './avatar/controller';
+import { AvatarController, ArcStateData, DialogueStateData } from './avatar/controller';
 import { AnimationLoop } from './animation/loop';
 import { Connection, ServerMessage } from './connection';
+import { PerformanceMonitor, AdaptiveQuality } from './performance/monitor';
 import type { VisemeData } from './avatar/lipsync';
 
 // --- DOM Elements ---
@@ -32,6 +35,10 @@ const avatarLoader = new AvatarLoader();
 const controller = new AvatarController();
 const animLoop = new AnimationLoop();
 const connection = new Connection();
+
+// Phase 5: Performance monitoring
+const perfMonitor = new PerformanceMonitor();
+const quality = new AdaptiveQuality(perfMonitor);
 
 // --- Audio Playback ---
 let audioContext: AudioContext | null = null;
@@ -152,6 +159,31 @@ connection.on('speech_end', () => {
   statusEl.className = 'connected';
 });
 
+// Phase 4: Dialogue state changes
+connection.on('dialogue_state', (msg: ServerMessage) => {
+  const stateData = msg.data as unknown as DialogueStateData;
+  controller.handleDialogueState(stateData);
+  console.log('[Main] Dialogue state:', stateData.state);
+});
+
+// Phase 4: Emotional arc updates
+connection.on('arc_state', (msg: ServerMessage) => {
+  const arcData = msg.data as unknown as ArcStateData;
+  controller.handleArcState(arcData);
+
+  // Update debug info
+  const debug = controller.getDebugInfo();
+  const debugEl = document.getElementById('arc-debug');
+  if (debugEl) {
+    debugEl.textContent = `rapport:${debug.rapport} state:${debug.dialogue} mood:${debug.dominant}`;
+  }
+});
+
+// Phase 5: Session metrics (logged, could be displayed in a dashboard)
+connection.on('session_metrics', (msg: ServerMessage) => {
+  console.log('[Telemetry] Session metrics:', msg.data);
+});
+
 // --- User Input ---
 
 function sendMessage(): void {
@@ -201,28 +233,42 @@ async function initWebXR(): Promise<void> {
 
 // --- Animation Loop ---
 
+let lastFrameStart = performance.now();
+
 animLoop.onUpdate((dt, elapsed) => {
+  const frameStart = performance.now();
+
   // Update avatar subsystems
   controller.update(dt);
 
   // Render
   renderer.render(scene, camera);
 
-  // Update FPS display
-  fpsEl.textContent = `${animLoop.fps} fps`;
+  // Phase 5: Performance monitoring
+  const frameTime = performance.now() - frameStart;
+  perfMonitor.recordFrame(frameTime);
+  perfMonitor.evaluate(elapsed);
+
+  // Update FPS display with quality indicator
+  const snap = perfMonitor.getSnapshot();
+  const qualityIndicator = quality.quality === 'high' ? '' : ` [${quality.quality}]`;
+  fpsEl.textContent = `${animLoop.fps} fps${qualityIndicator}`;
+
+  lastFrameStart = frameStart;
 });
 
 // --- Start Everything ---
 
 async function init(): Promise<void> {
-  console.log('[Eve] Avatar Engine initializing...');
+  console.log('[Eve] Avatar Engine initializing (Phase 1-5)...');
 
   await loadAvatar();
   initWebXR();
   connection.connect();
   animLoop.start();
 
-  console.log('[Eve] Ready');
+  console.log('[Eve] Ready — Phase 4: Memory, Dialogue FSM, Personality, Choreography');
+  console.log('[Eve] Ready — Phase 5: Performance Monitor, Breathing, Micro-Expressions, Telemetry');
 }
 
 init();

@@ -83,6 +83,34 @@ def make_status_message(status: str, detail: str = "") -> Message:
     return Message(type="status", data={"status": status, "detail": detail})
 
 
+def make_dialogue_state_message(state: str, modifiers: dict | None = None) -> Message:
+    """Phase 4: Notify client of dialogue state transitions."""
+    data: dict = {"state": state}
+    if modifiers:
+        data["modifiers"] = modifiers
+    return Message(type="dialogue_state", data=data)
+
+
+def make_arc_state_message(
+    rapport: float,
+    valence_momentum: float,
+    dominant_emotion: str,
+    is_recovering: bool,
+) -> Message:
+    """Phase 4: Send emotional arc state to client for UI/debug."""
+    return Message(type="arc_state", data={
+        "rapport": round(rapport, 3),
+        "valenceMomentum": round(valence_momentum, 3),
+        "dominantEmotion": dominant_emotion,
+        "isRecovering": is_recovering,
+    })
+
+
+def make_session_metrics_message(metrics: dict) -> Message:
+    """Phase 5: Send session analytics snapshot."""
+    return Message(type="session_metrics", data=metrics)
+
+
 # --- Client → Server messages ---
 
 def parse_user_input(msg: Message) -> str:

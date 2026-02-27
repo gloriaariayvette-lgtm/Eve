@@ -1,4 +1,8 @@
-"""Streaming LLM client for OpenAI-compatible endpoints (LM Studio, ollama, etc.)."""
+"""Streaming LLM client for OpenAI-compatible endpoints (LM Studio, ollama, etc.).
+
+Phase 4: Now integrates with ConversationMemory for context-aware history
+and build_system_prompt for personality/state-aware prompting.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +12,7 @@ from typing import AsyncIterator
 from openai import AsyncOpenAI
 
 from server.config import settings
-from server.llm.prompts import SYSTEM_PROMPT
+from server.llm.prompts import SYSTEM_PROMPT, build_system_prompt
 
 log = logging.getLogger(__name__)
 
@@ -23,6 +27,17 @@ class LLMClient:
         self.conversation_history: list[dict[str, str]] = []
         self.max_history = 20  # keep last N turns
 
+        # Phase 4: dynamic system prompt (updated per turn)
+        self._system_prompt = SYSTEM_PROMPT
+
+    def set_system_prompt(self, prompt: str) -> None:
+        """Update the system prompt (called by pipeline with personality/state context)."""
+        self._system_prompt = prompt
+
+    def set_context_history(self, messages: list[dict[str, str]]) -> None:
+        """Replace conversation history with context from ConversationMemory."""
+        self.conversation_history = messages
+
     async def chat_stream(self, user_message: str) -> AsyncIterator[str]:
         """Stream LLM response tokens. Yields text chunks as they arrive."""
         self.conversation_history.append({"role": "user", "content": user_message})
@@ -32,7 +47,7 @@ class LLMClient:
             self.conversation_history = self.conversation_history[-self.max_history:]
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": self._system_prompt},
             *self.conversation_history,
         ]
 
