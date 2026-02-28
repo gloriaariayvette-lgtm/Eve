@@ -122,6 +122,23 @@ export class BreathingSystem {
   }
 
   /**
+   * Alias for triggerHold — used by Velaris event handler.
+   */
+  triggerBreathHold(duration: number): void {
+    this.triggerHold(duration);
+  }
+
+  /**
+   * Velaris: Set breathing modifiers from EmoClaw state.
+   * Rate modifier: 1.0 = normal, >1 = faster, <1 = slower.
+   * Depth modifier: 1.0 = normal, >1 = deeper, <1 = shallower.
+   */
+  setModifiers(rateModifier: number, depthModifier: number): void {
+    this.targetRate = 14 * rateModifier;
+    this.targetDepth = 0.5 * depthModifier;
+  }
+
+  /**
    * Get current breath state for external systems.
    */
   getState(): BreathState {

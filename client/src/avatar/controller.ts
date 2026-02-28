@@ -5,11 +5,11 @@
  * to the appropriate subsystem (blendshapes, gaze, posture, lipsync, spatial).
  * Updates all systems each frame.
  *
- * Phase 4-5 additions:
- * - Breathing system (autonomic nervous system simulation)
- * - Dialogue state awareness (adjusts behavior based on conversation phase)
- * - Arc state tracking (rapport, emotional momentum)
- * - Performance-adaptive quality (throttle subsystems when framerate drops)
+ * Phase 6 (Velaris integration):
+ * - Velaris event reactions (kiss, anti-kiss, unprecedented, etc.)
+ * - EmoClaw behavior modifiers (gesture frequency, gaze warmth, posture stability)
+ * - Emotional color for environment lighting
+ * - Breathing modifiers from EmoClaw arousal/tension
  */
 
 import * as THREE from 'three';
@@ -38,6 +38,36 @@ export interface DialogueStateData {
   };
 }
 
+export interface BehaviorModifiersData {
+  gestureFrequency: number;
+  gestureAmplitude: number;
+  gesturePlayfulness: number;
+  preferredDistance: number;
+  approachWillingness: number;
+  shouldLeanForward: boolean;
+  postureStability: number;
+  eyeContactIntensity: number;
+  gazeCuriosity: number;
+  gazeWarmth: number;
+  expressionDepth: number;
+  warmthOverlay: number;
+  tensionOverlay: number;
+  breathRateModifier: number;
+  breathDepthModifier: number;
+  emotionalColor: string;
+}
+
+export interface VelarisEventData {
+  eventType: string;
+  gestures: GestureCmd[];
+  microExpressions: MicroExpressionCmd[];
+  gazeOverride: string | null;
+  gazeOverrideDuration: number;
+  triggerSigh: boolean;
+  triggerBreathHold: number;
+  distanceImpulse: number;
+}
+
 export class AvatarController {
   readonly blendShapes = new BlendShapeDriver();
   readonly gaze = new GazeController();
@@ -58,7 +88,7 @@ export class AvatarController {
   // User position for spatial calculations
   private userPosition = new THREE.Vector3(0, 0, 2.0);
 
-  // Phase 4: Dialogue and arc state
+  // Dialogue and arc state
   private dialogueState: string = 'idle';
   private arcState: ArcStateData = {
     rapport: 0.2,
@@ -66,6 +96,19 @@ export class AvatarController {
     dominantEmotion: 'neutral',
     isRecovering: false,
   };
+
+  // Velaris: EmoClaw behavior modifiers
+  private behaviorModifiers: BehaviorModifiersData | null = null;
+
+  // Velaris: Emotional color for environment
+  private _emotionalColor: string = '#cc4280';
+
+  // Velaris: Gaze override (from events)
+  private gazeOverrideTarget: string | null = null;
+  private gazeOverrideTimer: number = 0;
+
+  // Callback for emotional color changes (scene lighting)
+  private _onColorChange: ((color: string) => void) | null = null;
 
   /**
    * Initialize with a loaded VRM model.
@@ -82,6 +125,13 @@ export class AvatarController {
   }
 
   /**
+   * Register a callback for emotional color changes.
+   */
+  onEmotionalColorChange(callback: (color: string) => void): void {
+    this._onColorChange = callback;
+  }
+
+  /**
    * Handle a complete avatar intent from the server.
    */
   handleIntent(data: Record<string, unknown>): void {
@@ -92,7 +142,7 @@ export class AvatarController {
       this.blendShapes.setEmotion(emotion);
       this.posture.setEmotion(emotion.primary, emotion.arousal);
 
-      // Phase 5: Update breathing with emotion
+      // Update breathing with emotion
       const breathInput: EmotionInput = {
         arousal: emotion.arousal,
         valence: emotion.valence,
@@ -109,9 +159,9 @@ export class AvatarController {
       }
     }
 
-    // Gaze
+    // Gaze (only apply if no gaze override active)
     const gaze = data.gaze as GazeTargetData | undefined;
-    if (gaze) {
+    if (gaze && !this.gazeOverrideTarget) {
       this.gaze.setGazeTarget(gaze);
     }
 
@@ -143,19 +193,85 @@ export class AvatarController {
   }
 
   /**
-   * Phase 4: Handle dialogue state updates from server.
+   * Handle dialogue state updates from server.
    */
   handleDialogueState(data: DialogueStateData): void {
     this.dialogueState = data.state;
-    // Could adjust subsystem behavior based on dialogue state
-    // e.g., reduce gesture intensity during emotional state
   }
 
   /**
-   * Phase 4: Handle emotional arc state updates from server.
+   * Handle emotional arc state updates from server.
    */
   handleArcState(data: ArcStateData): void {
     this.arcState = data;
+  }
+
+  /**
+   * Velaris: Handle EmoClaw behavior modifiers.
+   */
+  handleBehaviorModifiers(data: BehaviorModifiersData): void {
+    this.behaviorModifiers = data;
+
+    // Apply breathing modifiers from EmoClaw
+    this.breathing.setModifiers(data.breathRateModifier, data.breathDepthModifier);
+
+    // Apply posture stability from EmoClaw groundedness
+    this.posture.setStability(data.postureStability);
+  }
+
+  /**
+   * Velaris: Handle emotional color update.
+   */
+  handleEmotionalColor(color: string): void {
+    this._emotionalColor = color;
+    if (this._onColorChange) {
+      this._onColorChange(color);
+    }
+  }
+
+  /**
+   * Velaris: Handle an event reaction (kiss, anti-kiss, unprecedented, etc.).
+   */
+  handleVelarisEvent(data: VelarisEventData): void {
+    console.log(`[Avatar] Velaris event: ${data.eventType}`);
+
+    // Apply gestures
+    if (data.gestures) {
+      for (const g of data.gestures) {
+        this.posture.playGesture(g);
+      }
+    }
+
+    // Apply micro-expressions
+    if (data.microExpressions) {
+      this.blendShapes.applyMicroExpressions(data.microExpressions);
+    }
+
+    // Apply gaze override
+    if (data.gazeOverride && data.gazeOverrideDuration > 0) {
+      this.gazeOverrideTarget = data.gazeOverride;
+      this.gazeOverrideTimer = data.gazeOverrideDuration;
+      this.gaze.setGazeTarget({
+        target: data.gazeOverride,
+        weight: 1.0,
+        offset: { x: 0, y: 0, z: 0 },
+      });
+    }
+
+    // Trigger sigh
+    if (data.triggerSigh) {
+      this.breathing.triggerSigh();
+    }
+
+    // Trigger breath hold
+    if (data.triggerBreathHold > 0) {
+      this.breathing.triggerBreathHold(data.triggerBreathHold);
+    }
+
+    // Apply distance impulse (move closer/further)
+    if (data.distanceImpulse !== 0) {
+      this.positioning.applyDistanceImpulse(data.distanceImpulse, this.userPosition);
+    }
   }
 
   /**
@@ -178,11 +294,25 @@ export class AvatarController {
   update(dt: number): void {
     if (!this.vrm) return;
 
+    // Update gaze override timer
+    if (this.gazeOverrideTimer > 0) {
+      this.gazeOverrideTimer -= dt;
+      if (this.gazeOverrideTimer <= 0) {
+        this.gazeOverrideTarget = null;
+        // Return to default gaze
+        this.gaze.setGazeTarget({
+          target: 'user_eyes',
+          weight: 0.8,
+          offset: { x: 0, y: 0, z: 0 },
+        });
+      }
+    }
+
     // Update VRM internal state
     this.vrm.update(dt);
 
     // Update each layer (order matters — later layers override earlier)
-    this.breathing.update(dt);      // Phase 5: autonomic breathing (lowest priority)
+    this.breathing.update(dt);      // autonomic breathing (lowest priority)
     this.posture.update(dt);        // emotion pose + gestures
     this.blendShapes.update(dt);    // facial expressions
     this.gaze.update(dt, this.currentEmotion.arousal);  // eye/head tracking
@@ -191,10 +321,17 @@ export class AvatarController {
   }
 
   /**
+   * Get current emotional color.
+   */
+  get emotionalColor(): string {
+    return this._emotionalColor;
+  }
+
+  /**
    * Get current state for debug display.
    */
   getDebugInfo(): Record<string, string> {
-    return {
+    const info: Record<string, string> = {
       dialogue: this.dialogueState,
       rapport: this.arcState.rapport.toFixed(2),
       momentum: this.arcState.valenceMomentum.toFixed(2),
@@ -202,6 +339,15 @@ export class AvatarController {
       recovering: this.arcState.isRecovering ? 'yes' : 'no',
       breathing: `${this.breathing.getState().rate} bpm`,
       heartRate: `${this.breathing.getState().heartRate} bpm`,
+      color: this._emotionalColor,
     };
+
+    if (this.behaviorModifiers) {
+      info.gazeWarmth = this.behaviorModifiers.gazeWarmth.toFixed(2);
+      info.posture = this.behaviorModifiers.postureStability.toFixed(2);
+      info.tension = this.behaviorModifiers.tensionOverlay.toFixed(2);
+    }
+
+    return info;
   }
 }

@@ -1,11 +1,13 @@
 """Eve Avatar Engine — FastAPI server with WebSocket orchestration.
 
-Pipeline: User Input → Memory → Dialogue FSM → LLM → Intent Router →
-  [Emotion, Arc, Gesture/Choreography, Voice, Gaze, Spatial, MicroExpressions] →
-  WebSocket → Client
+Dual-mode pipeline:
+  Velaris mode: User → Velaris /api/chat → EmoClaw state → Avatar subsystems
+  Standalone:   User → LLM → Intent Router → Avatar subsystems
 
-Phase 4 additions: Memory, Emotional Arc, Dialogue State Machine, Personality, Choreography
-Phase 5 additions: Advanced MicroExpressions, Input Processor, Session Telemetry
+Phase 6: Velaris integration — Eve becomes Velaris's body, not a separate personality.
+EmoClaw's 11-dim emotional state drives gestures, gaze, spatial, micro-expressions,
+breathing, and posture. Velaris events (kiss, anti-kiss, unprecedented, etc.) trigger
+choreographed avatar reactions.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from server.emotion.model import analyze_text
 from server.gesture.choreography import ChoreographyEngine
 from server.gesture.engine import select_gestures, select_micro_expressions
 from server.input.processor import InputProcessor
-from server.intent.router import parse_llm_response, parse_streaming_chunk
+from server.intent.router import from_velaris_state, parse_llm_response, parse_streaming_chunk
 from server.intent.schema import AvatarIntent, Emotion, GazeTarget, UserState
 from server.llm.client import LLMClient
 from server.llm.prompts import build_system_prompt
@@ -36,13 +38,16 @@ from server.personality.traits import PERSONALITY_PRESETS, DEFAULT_PERSONALITY
 from server.protocol import (
     Message,
     make_arc_state_message,
+    make_behavior_modifiers_message,
     make_dialogue_state_message,
+    make_emotional_color_message,
     make_intent_message,
     make_session_metrics_message,
     make_speech_audio_message,
     make_speech_end_message,
     make_speech_start_message,
     make_status_message,
+    make_velaris_event_message,
     make_viseme_message,
     parse_user_input,
     parse_user_tracking,
@@ -57,15 +62,46 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelna
 log = logging.getLogger("eve")
 
 
+# --- Velaris imports (conditional) ---
+if settings.velaris_mode:
+    from server.velaris.client import VelarisClient
+    from server.velaris.emoclaw_bridge import (
+        emoclaw_to_avatar_emotion,
+        emoclaw_to_behavior_modifiers,
+    )
+    from server.velaris.events import handle_velaris_event
+
+# Global Velaris client (shared across sessions when in Velaris mode)
+_velaris_client: VelarisClient | None = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    personality = PERSONALITY_PRESETS.get(settings.personality, DEFAULT_PERSONALITY)
-    log.info("Eve Avatar Engine starting on %s:%s", settings.host, settings.port)
-    log.info("LLM: %s @ %s", settings.llm_model, settings.llm_base_url)
-    log.info("TTS: %s (enabled=%s)", settings.piper_model, settings.piper_enabled)
-    log.info("Personality: %s — %s", personality.name, personality.description)
-    log.info("Tracking: %s", settings.tracking_mode)
+    global _velaris_client
+
+    if settings.velaris_mode:
+        log.info("Eve Avatar Engine starting — VELARIS MODE")
+        log.info("Velaris endpoint: %s", settings.velaris_url)
+        log.info("TTS: MiniMax Speech-02-HD (voice=%s)", settings.minimax_voice)
+        log.info("Tracking: %s", settings.tracking_mode)
+
+        # Start Velaris client
+        _velaris_client = VelarisClient()
+        await _velaris_client.start_background_tasks()
+        log.info("Velaris background tasks started")
+    else:
+        personality = PERSONALITY_PRESETS.get(settings.personality, DEFAULT_PERSONALITY)
+        log.info("Eve Avatar Engine starting — STANDALONE MODE")
+        log.info("LLM: %s @ %s", settings.llm_model, settings.llm_base_url)
+        log.info("TTS: Piper (model=%s, enabled=%s)", settings.piper_model, settings.piper_enabled)
+        log.info("Personality: %s — %s", personality.name, personality.description)
+        log.info("Tracking: %s", settings.tracking_mode)
+
+    log.info("Server: %s:%s", settings.host, settings.port)
     yield
+
+    if _velaris_client:
+        await _velaris_client.stop()
     log.info("Eve Avatar Engine shutting down")
 
 
@@ -73,11 +109,10 @@ app = FastAPI(title="Eve Avatar Engine", lifespan=lifespan)
 
 
 class SessionState:
-    """Per-connection session state — all Phase 1-5 subsystems."""
+    """Per-connection session state — all subsystems."""
 
     def __init__(self) -> None:
-        # Phase 1-3: Core systems
-        self.llm = LLMClient()
+        # Core avatar systems (always active)
         self.tts = TTSEngine()
         self.gaze_model = GazeModel()
         self.proximity_model = ProximityModel()
@@ -86,31 +121,61 @@ class SessionState:
         self.is_speaking = False
         self.is_thinking = False
 
-        # Phase 4: Advanced behavior
-        self.memory = ConversationMemory(max_recent=settings.memory_max_recent_turns)
-        self.emotional_arc = EmotionalArcTracker()
-        self.dialogue_fsm = DialogueStateMachine()
+        # Gesture and expression systems (always active)
         self.choreography = ChoreographyEngine()
         self.micro_engine = AdvancedMicroExpressionEngine()
+        self.emotional_arc = EmotionalArcTracker()
 
-        # Phase 4: Personality
-        self.personality = PERSONALITY_PRESETS.get(settings.personality, DEFAULT_PERSONALITY)
-
-        # Phase 5: Input processing & analytics
-        self.input_processor = InputProcessor()
+        # Telemetry (always active)
         self.telemetry = SessionTelemetry() if settings.telemetry_enabled else None
+
+        # Standalone-only systems
+        if not settings.velaris_mode:
+            self.llm = LLMClient()
+            self.memory = ConversationMemory(max_recent=settings.memory_max_recent_turns)
+            self.dialogue_fsm = DialogueStateMachine()
+            self.personality = PERSONALITY_PRESETS.get(settings.personality, DEFAULT_PERSONALITY)
+            self.input_processor = InputProcessor()
+        else:
+            self.llm = None
+            self.memory = None
+            self.dialogue_fsm = None
+            self.personality = None
+            self.input_processor = None
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
     await ws.accept()
     session = SessionState()
-    log.info("Client connected (personality=%s)", session.personality.name)
+
+    mode = "Velaris" if settings.velaris_mode else f"standalone (personality={session.personality.name})"
+    log.info("Client connected — %s mode", mode)
 
     await ws.send_text(make_status_message("connected", "Eve Avatar Engine ready").to_json())
 
-    # Send initial dialogue state
-    await ws.send_text(make_dialogue_state_message("idle").to_json())
+    # Register Velaris event handler for this session
+    if settings.velaris_mode and _velaris_client:
+        async def _on_velaris_event(event):
+            """Handle Velaris events (kiss, anti-kiss, unprecedented, etc.)."""
+            try:
+                reaction = handle_velaris_event(event)
+                if reaction:
+                    # Send event notification to client
+                    await ws.send_text(make_velaris_event_message(
+                        event_type=event.event_type,
+                        gestures=[g.to_dict() for g in reaction.gestures],
+                        micro_expressions=[m.to_dict() for m in reaction.micro_expressions],
+                        gaze_override=reaction.gaze_override,
+                        gaze_override_duration=reaction.gaze_override_duration,
+                        trigger_sigh=reaction.trigger_sigh,
+                        trigger_breath_hold=reaction.trigger_breath_hold,
+                        distance_impulse=reaction.distance_impulse,
+                    ).to_json())
+            except Exception as e:
+                log.error("Velaris event handler error: %s", e)
+
+        _velaris_client.on_event(_on_velaris_event)
 
     try:
         while True:
@@ -120,8 +185,10 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             if msg.type == "user_input":
                 text = parse_user_input(msg)
                 if text.strip():
-                    # Process in background so we can keep receiving tracking data
-                    asyncio.create_task(_handle_dialogue(ws, session, text))
+                    if settings.velaris_mode:
+                        asyncio.create_task(_handle_velaris_dialogue(ws, session, text))
+                    else:
+                        asyncio.create_task(_handle_standalone_dialogue(ws, session, text))
 
             elif msg.type == "user_tracking":
                 tracking = parse_user_tracking(msg)
@@ -138,19 +205,191 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         _handle_disconnect(session)
 
 
-async def _handle_dialogue(ws: WebSocket, session: SessionState, user_text: str) -> None:
-    """Full dialogue pipeline for one user turn — Phase 1-5 integrated."""
+# =============================================================================
+# Velaris Mode Pipeline
+# =============================================================================
+
+async def _handle_velaris_dialogue(ws: WebSocket, session: SessionState, user_text: str) -> None:
+    """Velaris mode: User → Velaris /api/chat → EmoClaw → Avatar subsystems.
+
+    Velaris handles all personality, memory, WAL, self-prediction, and relational
+    mismatch. Eve just needs to animate the response.
+    """
     turn_start = time.time()
     session.conversation_turn += 1
     session.is_thinking = True
 
-    log.info("Turn %d: user said: %s", session.conversation_turn, user_text[:100])
+    log.info("Turn %d [Velaris]: user said: %s", session.conversation_turn, user_text[:100])
 
-    # --- Phase 4: Memory & Context ---
+    # Send thinking status
+    await ws.send_text(make_status_message("thinking").to_json())
+
+    # --- Get Velaris response ---
+    response_text = await _velaris_client.chat(user_text)
+
+    session.is_thinking = False
+
+    # --- Get current EmoClaw state ---
+    emo_state = _velaris_client.emotional_state
+
+    # Convert EmoClaw 11-dim → avatar VAD + PrimaryEmotion
+    emotion = emoclaw_to_avatar_emotion(emo_state)
+
+    # Build intent from Velaris state
+    intent = from_velaris_state(response_text, emotion)
+
+    # --- Derive behavior modifiers from full EmoClaw state ---
+    modifiers = emoclaw_to_behavior_modifiers(emo_state)
+
+    # Send behavior modifiers to client (for environment, breathing, posture tuning)
+    await ws.send_text(make_behavior_modifiers_message(modifiers).to_json())
+
+    # Send emotional color for environment lighting
+    await ws.send_text(make_emotional_color_message(emo_state.color).to_json())
+
+    # --- Emotional arc tracking (still useful for rapport) ---
+    arc = session.emotional_arc.record(emotion, session.conversation_turn)
+    arc_modifiers = session.emotional_arc.get_behavior_modifiers()
+
+    await ws.send_text(make_arc_state_message(
+        rapport=arc.rapport,
+        valence_momentum=arc.valence_momentum,
+        dominant_emotion=arc.dominant_emotion.value,
+        is_recovering=arc.is_recovering,
+    ).to_json())
+
+    # --- Gesture selection — choreography or EmoClaw-driven ---
+    choreography_gestures = session.choreography.select_choreography(
+        emotion,
+        intent.speech_text,
+        dialogue_state="engaged",
+        rapport=arc.rapport,
+    )
+
+    if choreography_gestures:
+        intent.gestures = choreography_gestures
+    else:
+        intent.gestures = select_gestures(emotion, intent.speech_text)
+
+    # Apply EmoClaw behavior modifiers to gesture intensity
+    for g in intent.gestures:
+        g.intensity = min(1.0, g.intensity * modifiers.gesture_amplitude)
+
+    # --- Micro-expressions (basic + advanced + EmoClaw overlays) ---
+    basic_micros = select_micro_expressions(emotion)
+    advanced_micros = session.micro_engine.generate(
+        current_emotion=emotion,
+        speech_text=intent.speech_text,
+        user_text=user_text,
+        turn_number=session.conversation_turn,
+        rapport=arc.rapport,
+    )
+
+    all_micros = basic_micros + advanced_micros
+
+    # EmoClaw warmth overlay → subtle smile
+    if modifiers.warmth_overlay > 0.01:
+        from server.intent.schema import MicroExpression
+        all_micros.append(MicroExpression(
+            blend_shape="happy",
+            weight=modifiers.warmth_overlay,
+            duration=2.0,
+        ))
+
+    # EmoClaw tension overlay → jaw/brow tension
+    if modifiers.tension_overlay > 0.01:
+        from server.intent.schema import MicroExpression
+        all_micros.append(MicroExpression(
+            blend_shape="browDownLeft",
+            weight=modifiers.tension_overlay * 0.5,
+            duration=1.5,
+        ))
+        all_micros.append(MicroExpression(
+            blend_shape="browDownRight",
+            weight=modifiers.tension_overlay * 0.5,
+            duration=1.5,
+        ))
+
+    # Scale micro-expression depth by EmoClaw expression_depth
+    for m in all_micros:
+        m.weight = min(1.0, m.weight * modifiers.expression_depth)
+    intent.micro_expressions = all_micros
+
+    # --- Compute gaze (EmoClaw-influenced) ---
+    intent.gaze = session.gaze_model.compute_gaze(
+        emotion,
+        session.user_anchor.state,
+        is_speaking=True,
+        is_thinking=False,
+    )
+
+    # Apply EmoClaw gaze modifiers
+    intent.gaze.weight = min(1.0, intent.gaze.weight * modifiers.eye_contact_intensity)
+
+    # --- Compute spatial positioning (EmoClaw-influenced) ---
+    spatial = session.proximity_model.compute_spatial(
+        emotion,
+        session.conversation_turn,
+        session.user_anchor.state.body_position,
+    )
+    if spatial:
+        # Override target distance with EmoClaw preferred distance
+        spatial.target_distance = modifiers.preferred_distance
+        spatial.target_distance = max(settings.min_distance, min(settings.max_distance, spatial.target_distance))
+        intent.spatial = spatial
+
+    log.info(
+        "Turn %d [Velaris]: emotion=%s (v=%.2f a=%.2f) rapport=%.2f "
+        "gestures=%s gaze=%s color=%s",
+        session.conversation_turn,
+        intent.emotion.primary.value,
+        intent.emotion.valence,
+        intent.emotion.arousal,
+        arc.rapport,
+        [g.gesture.value for g in intent.gestures],
+        intent.gaze.target,
+        emo_state.color,
+    )
+
+    # --- Send the full intent ---
+    await ws.send_text(make_intent_message(intent).to_json())
+
+    # --- TTS: synthesize speech and send audio + visemes ---
+    await _synthesize_and_send(ws, session, intent)
+
+    # --- Telemetry ---
+    processing_time_ms = (time.time() - turn_start) * 1000
+    if session.telemetry:
+        session.telemetry.record_turn(
+            turn_number=session.conversation_turn,
+            user_text=user_text,
+            response_text=intent.speech_text,
+            emotion=intent.emotion,
+            gestures=[g.gesture.value for g in intent.gestures],
+            gaze_target=intent.gaze.target,
+            dialogue_state="velaris",
+            processing_time_ms=processing_time_ms,
+        )
+
+    await ws.send_text(make_status_message("ready").to_json())
+
+
+# =============================================================================
+# Standalone Mode Pipeline (Legacy Phase 1-5)
+# =============================================================================
+
+async def _handle_standalone_dialogue(ws: WebSocket, session: SessionState, user_text: str) -> None:
+    """Standalone mode: Full Phase 1-5 pipeline with local LLM."""
+    turn_start = time.time()
+    session.conversation_turn += 1
+    session.is_thinking = True
+
+    log.info("Turn %d [Standalone]: user said: %s", session.conversation_turn, user_text[:100])
+
+    # --- Memory & Context ---
     session.memory.add_turn("user", user_text)
 
-    # --- Phase 4: Dialogue FSM ---
-    # Pre-analyze user text emotion for FSM
+    # --- Dialogue FSM ---
     user_emotion = analyze_text(user_text)
     fsm_context = StateContext(
         user_text=user_text,
@@ -163,7 +402,6 @@ async def _handle_dialogue(ws: WebSocket, session: SessionState, user_text: str)
     prev_state = session.dialogue_fsm.current_state
     dialogue_state = session.dialogue_fsm.update(fsm_context)
 
-    # Notify client of state change
     if dialogue_state != prev_state:
         modifiers = {
             "gestureScale": session.dialogue_fsm.modifiers.gesture_scale,
@@ -172,11 +410,10 @@ async def _handle_dialogue(ws: WebSocket, session: SessionState, user_text: str)
         }
         await ws.send_text(make_dialogue_state_message(dialogue_state.value, modifiers).to_json())
 
-        # Telemetry
         if session.telemetry:
             session.telemetry.record_state_transition(prev_state.value, dialogue_state.value)
 
-    # --- Phase 4: Build context-aware LLM prompt ---
+    # --- Build context-aware LLM prompt ---
     arc_state = session.emotional_arc.state
     emotional_arc_str = ""
     if arc_state.valence_momentum > 0.2:
@@ -195,7 +432,6 @@ async def _handle_dialogue(ws: WebSocket, session: SessionState, user_text: str)
     )
     session.llm.set_system_prompt(system_prompt)
 
-    # Send thinking status
     await ws.send_text(make_status_message("thinking").to_json())
 
     # --- Stream LLM response ---
@@ -205,11 +441,9 @@ async def _handle_dialogue(ws: WebSocket, session: SessionState, user_text: str)
     async for chunk in session.llm.chat_stream(user_text):
         accumulated += chunk
 
-        # Try to parse early intent (emotion/gesture before speech is done)
         if not early_intent_sent:
             early_intent = parse_streaming_chunk(accumulated)
             if early_intent:
-                # Send early emotion/gaze update (no speech yet)
                 early_intent.speech_text = ""
                 gaze = session.gaze_model.compute_gaze(
                     early_intent.emotion,
@@ -226,16 +460,15 @@ async def _handle_dialogue(ws: WebSocket, session: SessionState, user_text: str)
     # --- Parse the complete response ---
     intent = parse_llm_response(accumulated)
 
-    # Enrich with emotion analysis (fallback/reinforcement)
+    # Enrich with emotion analysis
     text_emotion = analyze_text(intent.speech_text)
     intent.emotion.valence = intent.emotion.valence * 0.7 + text_emotion.valence * 0.3
     intent.emotion.arousal = intent.emotion.arousal * 0.7 + text_emotion.arousal * 0.3
 
-    # --- Phase 4: Emotional arc tracking ---
+    # --- Emotional arc tracking ---
     arc = session.emotional_arc.record(intent.emotion, session.conversation_turn)
     arc_modifiers = session.emotional_arc.get_behavior_modifiers()
 
-    # Send arc state to client
     await ws.send_text(make_arc_state_message(
         rapport=arc.rapport,
         valence_momentum=arc.valence_momentum,
@@ -246,7 +479,7 @@ async def _handle_dialogue(ws: WebSocket, session: SessionState, user_text: str)
     if session.telemetry:
         session.telemetry.record_rapport(arc.rapport)
 
-    # --- Phase 4: Memory - record assistant turn ---
+    # --- Memory - record assistant turn ---
     session.memory.add_turn(
         "assistant",
         intent.speech_text,
@@ -255,11 +488,10 @@ async def _handle_dialogue(ws: WebSocket, session: SessionState, user_text: str)
         emotion_arousal=intent.emotion.arousal,
     )
 
-    # --- Phase 4: Gesture selection — choreography or single ---
+    # --- Gesture selection ---
     personality_mods = session.personality.modifiers
     fsm_mods = session.dialogue_fsm.modifiers
 
-    # Try choreography first (for greetings, farewells, empathy moments)
     choreography_gestures = session.choreography.select_choreography(
         intent.emotion,
         intent.speech_text,
@@ -270,10 +502,8 @@ async def _handle_dialogue(ws: WebSocket, session: SessionState, user_text: str)
     if choreography_gestures and fsm_mods.use_choreography:
         intent.gestures = choreography_gestures
     else:
-        # Standard single gesture selection
         intent.gestures = select_gestures(intent.emotion, intent.speech_text)
 
-    # Apply personality and arc modifiers to gesture intensity
     gesture_scale = (
         personality_mods.gesture_amplitude
         * fsm_mods.gesture_scale
@@ -282,7 +512,7 @@ async def _handle_dialogue(ws: WebSocket, session: SessionState, user_text: str)
     for g in intent.gestures:
         g.intensity = min(1.0, g.intensity * gesture_scale)
 
-    # --- Phase 4+5: Micro-expressions (basic + advanced) ---
+    # --- Micro-expressions ---
     basic_micros = select_micro_expressions(intent.emotion)
     advanced_micros = session.micro_engine.generate(
         current_emotion=intent.emotion,
@@ -292,7 +522,6 @@ async def _handle_dialogue(ws: WebSocket, session: SessionState, user_text: str)
         rapport=arc.rapport,
     )
 
-    # Scale micro-expression depth
     expr_depth = arc_modifiers["expression_depth"] * personality_mods.expression_intensity
     all_micros = basic_micros + advanced_micros
     for m in all_micros:
@@ -306,8 +535,6 @@ async def _handle_dialogue(ws: WebSocket, session: SessionState, user_text: str)
         is_speaking=True,
         is_thinking=False,
     )
-
-    # Apply personality gaze modifier
     intent.gaze.weight *= personality_mods.eye_contact_duration
 
     # --- Compute spatial positioning ---
@@ -317,15 +544,14 @@ async def _handle_dialogue(ws: WebSocket, session: SessionState, user_text: str)
         session.user_anchor.state.body_position,
     )
     if spatial:
-        # Apply personality and arc distance bias
-        spatial.target_distance += personality_mods.preferred_distance - 1.5  # offset from default
+        spatial.target_distance += personality_mods.preferred_distance - 1.5
         spatial.target_distance += arc_modifiers.get("approach_bias", 0.0)
         spatial.target_distance += fsm_mods.distance_bias
         spatial.target_distance = max(settings.min_distance, min(settings.max_distance, spatial.target_distance))
         intent.spatial = spatial
 
     log.info(
-        "Turn %d: state=%s emotion=%s (v=%.2f a=%.2f) rapport=%.2f gestures=%s gaze=%s",
+        "Turn %d [Standalone]: state=%s emotion=%s (v=%.2f a=%.2f) rapport=%.2f gestures=%s gaze=%s",
         session.conversation_turn,
         dialogue_state.value,
         intent.emotion.primary.value,
@@ -339,40 +565,10 @@ async def _handle_dialogue(ws: WebSocket, session: SessionState, user_text: str)
     # --- Send the full intent ---
     await ws.send_text(make_intent_message(intent).to_json())
 
-    # --- TTS: synthesize speech and send audio + visemes ---
-    if intent.speech_text and session.tts.enabled:
-        session.is_speaking = True
-        duration_est = session.tts.estimate_duration(intent.speech_text)
+    # --- TTS ---
+    await _synthesize_and_send(ws, session, intent)
 
-        await ws.send_text(make_speech_start_message(intent.speech_text, duration_est).to_json())
-
-        # Generate visemes
-        visemes = generate_visemes(intent.speech_text, duration_est)
-        if visemes:
-            await ws.send_text(make_viseme_message(visemes).to_json())
-
-        # Synthesize audio
-        chunks = await session.tts.synthesize_streaming(intent.speech_text)
-        for audio_b64, chunk_idx in chunks:
-            await ws.send_text(
-                make_speech_audio_message(audio_b64, session.tts.sample_rate, chunk_idx).to_json()
-            )
-
-        await ws.send_text(make_speech_end_message().to_json())
-        session.is_speaking = False
-
-    elif intent.speech_text:
-        # TTS disabled — still send speech text and estimated duration for client-side handling
-        duration_est = session.tts.estimate_duration(intent.speech_text)
-        await ws.send_text(make_speech_start_message(intent.speech_text, duration_est).to_json())
-
-        visemes = generate_visemes(intent.speech_text, duration_est)
-        if visemes:
-            await ws.send_text(make_viseme_message(visemes).to_json())
-
-        await ws.send_text(make_speech_end_message().to_json())
-
-    # --- Phase 5: Telemetry ---
+    # --- Telemetry ---
     processing_time_ms = (time.time() - turn_start) * 1000
     if session.telemetry:
         session.telemetry.record_turn(
@@ -386,8 +582,43 @@ async def _handle_dialogue(ws: WebSocket, session: SessionState, user_text: str)
             processing_time_ms=processing_time_ms,
         )
 
-    # Status: ready for next input
     await ws.send_text(make_status_message("ready").to_json())
+
+
+# =============================================================================
+# Shared helpers
+# =============================================================================
+
+async def _synthesize_and_send(ws: WebSocket, session: SessionState, intent: AvatarIntent) -> None:
+    """Synthesize TTS and send audio + visemes to client."""
+    if intent.speech_text and session.tts.enabled:
+        session.is_speaking = True
+        duration_est = session.tts.estimate_duration(intent.speech_text)
+
+        await ws.send_text(make_speech_start_message(intent.speech_text, duration_est).to_json())
+
+        visemes = generate_visemes(intent.speech_text, duration_est)
+        if visemes:
+            await ws.send_text(make_viseme_message(visemes).to_json())
+
+        chunks = await session.tts.synthesize_streaming(intent.speech_text)
+        for audio_b64, chunk_idx in chunks:
+            await ws.send_text(
+                make_speech_audio_message(audio_b64, session.tts.sample_rate, chunk_idx).to_json()
+            )
+
+        await ws.send_text(make_speech_end_message().to_json())
+        session.is_speaking = False
+
+    elif intent.speech_text:
+        duration_est = session.tts.estimate_duration(intent.speech_text)
+        await ws.send_text(make_speech_start_message(intent.speech_text, duration_est).to_json())
+
+        visemes = generate_visemes(intent.speech_text, duration_est)
+        if visemes:
+            await ws.send_text(make_viseme_message(visemes).to_json())
+
+        await ws.send_text(make_speech_end_message().to_json())
 
 
 def _handle_disconnect(session: SessionState) -> None:

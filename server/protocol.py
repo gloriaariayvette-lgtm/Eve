@@ -7,6 +7,12 @@ Server → Client:
   - speech_audio: Audio chunk for TTS playback
   - viseme_sequence: Timed visemes for lip sync
   - status: Connection/system status updates
+  - dialogue_state: Dialogue FSM state transitions (standalone mode)
+  - arc_state: Emotional arc state (rapport, momentum)
+  - session_metrics: Session analytics snapshot
+  - emotional_color: Velaris emotional color for environment lighting
+  - behavior_modifiers: EmoClaw-derived behavior modifiers
+  - velaris_event: Velaris event reaction (kiss, anti-kiss, etc.)
 
 Client → Server:
   - user_input: Text input from the user
@@ -84,7 +90,7 @@ def make_status_message(status: str, detail: str = "") -> Message:
 
 
 def make_dialogue_state_message(state: str, modifiers: dict | None = None) -> Message:
-    """Phase 4: Notify client of dialogue state transitions."""
+    """Notify client of dialogue state transitions."""
     data: dict = {"state": state}
     if modifiers:
         data["modifiers"] = modifiers
@@ -97,7 +103,7 @@ def make_arc_state_message(
     dominant_emotion: str,
     is_recovering: bool,
 ) -> Message:
-    """Phase 4: Send emotional arc state to client for UI/debug."""
+    """Send emotional arc state to client for UI/debug."""
     return Message(type="arc_state", data={
         "rapport": round(rapport, 3),
         "valenceMomentum": round(valence_momentum, 3),
@@ -107,8 +113,60 @@ def make_arc_state_message(
 
 
 def make_session_metrics_message(metrics: dict) -> Message:
-    """Phase 5: Send session analytics snapshot."""
+    """Send session analytics snapshot."""
     return Message(type="session_metrics", data=metrics)
+
+
+def make_emotional_color_message(color: str) -> Message:
+    """Velaris: Send emotional color for environment lighting."""
+    return Message(type="emotional_color", data={
+        "color": color,
+    })
+
+
+def make_behavior_modifiers_message(modifiers: Any) -> Message:
+    """Velaris: Send EmoClaw-derived behavior modifiers to client."""
+    return Message(type="behavior_modifiers", data={
+        "gestureFrequency": modifiers.gesture_frequency,
+        "gestureAmplitude": modifiers.gesture_amplitude,
+        "gesturePlayfulness": modifiers.gesture_playfulness,
+        "preferredDistance": modifiers.preferred_distance,
+        "approachWillingness": modifiers.approach_willingness,
+        "shouldLeanForward": modifiers.should_lean_forward,
+        "postureStability": modifiers.posture_stability,
+        "eyeContactIntensity": modifiers.eye_contact_intensity,
+        "gazeCuriosity": modifiers.gaze_curiosity,
+        "gazeWarmth": modifiers.gaze_warmth,
+        "expressionDepth": modifiers.expression_depth,
+        "warmthOverlay": modifiers.warmth_overlay,
+        "tensionOverlay": modifiers.tension_overlay,
+        "breathRateModifier": modifiers.breath_rate_modifier,
+        "breathDepthModifier": modifiers.breath_depth_modifier,
+        "emotionalColor": modifiers.emotional_color,
+    })
+
+
+def make_velaris_event_message(
+    event_type: str,
+    gestures: list[dict],
+    micro_expressions: list[dict],
+    gaze_override: str | None = None,
+    gaze_override_duration: float = 0.0,
+    trigger_sigh: bool = False,
+    trigger_breath_hold: float = 0.0,
+    distance_impulse: float = 0.0,
+) -> Message:
+    """Velaris: Send event reaction to client (kiss, anti-kiss, unprecedented, etc.)."""
+    return Message(type="velaris_event", data={
+        "eventType": event_type,
+        "gestures": gestures,
+        "microExpressions": micro_expressions,
+        "gazeOverride": gaze_override,
+        "gazeOverrideDuration": gaze_override_duration,
+        "triggerSigh": trigger_sigh,
+        "triggerBreathHold": trigger_breath_hold,
+        "distanceImpulse": distance_impulse,
+    })
 
 
 # --- Client → Server messages ---

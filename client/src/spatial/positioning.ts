@@ -74,6 +74,19 @@ export class AvatarPositioning {
   }
 
   /**
+   * Velaris: Apply a distance impulse (move closer or further from user).
+   * Negative = move closer, positive = move away.
+   */
+  applyDistanceImpulse(impulse: number, userPosition: THREE.Vector3): void {
+    const dir = new THREE.Vector3().subVectors(userPosition, this.currentPos).normalize();
+    const currentDist = this.currentPos.distanceTo(userPosition);
+    const newDist = Math.max(0.5, currentDist - impulse); // negative impulse = closer
+    this.targetPos.copy(userPosition).sub(dir.multiplyScalar(newDist));
+    this.targetPos.y = this.currentPos.y;
+    this.isCircling = false;
+  }
+
+  /**
    * Update positioning. Call every frame.
    */
   update(dt: number, userPosition: THREE.Vector3): void {

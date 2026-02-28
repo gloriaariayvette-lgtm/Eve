@@ -1,19 +1,25 @@
 /**
  * Eve Avatar Engine — Client Entry Point
  *
- * Initializes:
- * 1. Three.js scene with cinematic lighting
- * 2. VRM avatar (loaded from server or placeholder)
- * 3. WebSocket connection to Eve server
- * 4. 60fps animation loop driving all avatar subsystems
- * 5. UI for text input and status display
- * 6. Performance monitoring with adaptive quality (Phase 5)
- * 7. Debug display for Phase 4 state (dialogue, rapport, arc)
+ * Phase 6: Velaris Integration
+ * - Velaris event reactions (kiss, anti-kiss, unprecedented, etc.)
+ * - EmoClaw behavior modifiers → breathing, posture, gaze tuning
+ * - Emotional color → environment lighting
+ * - WebXR session lifecycle for PSVR2/SteamVR
+ * - VR environment with Velaris-influenced atmosphere
  */
 
+import * as THREE from 'three';
 import { createScene } from './scene/setup';
+import { addEnvironment, updateEnvironmentColor, updateEnvironmentFrame } from './scene/environment';
 import { AvatarLoader } from './avatar/loader';
-import { AvatarController, ArcStateData, DialogueStateData } from './avatar/controller';
+import {
+  AvatarController,
+  ArcStateData,
+  BehaviorModifiersData,
+  DialogueStateData,
+  VelarisEventData,
+} from './avatar/controller';
 import { AnimationLoop } from './animation/loop';
 import { Connection, ServerMessage } from './connection';
 import { PerformanceMonitor, AdaptiveQuality } from './performance/monitor';
@@ -36,9 +42,15 @@ const controller = new AvatarController();
 const animLoop = new AnimationLoop();
 const connection = new Connection();
 
-// Phase 5: Performance monitoring
+// Performance monitoring
 const perfMonitor = new PerformanceMonitor();
 const quality = new AdaptiveQuality(perfMonitor);
+
+// Add environment and wire up emotional color
+addEnvironment(scene);
+controller.onEmotionalColorChange((color: string) => {
+  updateEnvironmentColor(scene, color);
+});
 
 // --- Audio Playback ---
 let audioContext: AudioContext | null = null;
@@ -72,7 +84,6 @@ async function playAudioB64(b64: string, sampleRate: number): Promise<void> {
 // --- Load Avatar ---
 async function loadAvatar(): Promise<void> {
   try {
-    // Try loading a VRM model from the models directory
     statusEl.textContent = 'loading avatar...';
     const vrm = await avatarLoader.load('/models/default.vrm');
     scene.add(vrm.scene);
@@ -82,7 +93,6 @@ async function loadAvatar(): Promise<void> {
     console.warn('[Main] No VRM model found, using placeholder:', e);
     const placeholder = avatarLoader.createPlaceholder();
     scene.add(placeholder);
-    // Controller won't have VRM — subsystems degrade gracefully
   }
 }
 
@@ -113,7 +123,6 @@ connection.on('avatar_intent', (msg: ServerMessage) => {
     speechBubble.textContent = speechText;
     speechBubble.classList.add('visible');
 
-    // Auto-hide after estimated duration
     const words = speechText.split(' ').length;
     const displayTime = Math.max(3000, words * 400);
     setTimeout(() => {
@@ -159,29 +168,61 @@ connection.on('speech_end', () => {
   statusEl.className = 'connected';
 });
 
-// Phase 4: Dialogue state changes
+// Dialogue state changes (standalone mode)
 connection.on('dialogue_state', (msg: ServerMessage) => {
   const stateData = msg.data as unknown as DialogueStateData;
   controller.handleDialogueState(stateData);
   console.log('[Main] Dialogue state:', stateData.state);
 });
 
-// Phase 4: Emotional arc updates
+// Emotional arc updates
 connection.on('arc_state', (msg: ServerMessage) => {
   const arcData = msg.data as unknown as ArcStateData;
   controller.handleArcState(arcData);
 
-  // Update debug info
   const debug = controller.getDebugInfo();
   const debugEl = document.getElementById('arc-debug');
   if (debugEl) {
-    debugEl.textContent = `rapport:${debug.rapport} state:${debug.dialogue} mood:${debug.dominant}`;
+    debugEl.textContent = `rapport:${debug.rapport} mood:${debug.dominant} color:${debug.color}`;
   }
 });
 
-// Phase 5: Session metrics (logged, could be displayed in a dashboard)
+// Session metrics
 connection.on('session_metrics', (msg: ServerMessage) => {
   console.log('[Telemetry] Session metrics:', msg.data);
+});
+
+// --- Velaris-specific message handlers ---
+
+// Emotional color (environment lighting)
+connection.on('emotional_color', (msg: ServerMessage) => {
+  const color = msg.data.color as string;
+  if (color) {
+    controller.handleEmotionalColor(color);
+    console.log('[Velaris] Emotional color:', color);
+  }
+});
+
+// EmoClaw behavior modifiers
+connection.on('behavior_modifiers', (msg: ServerMessage) => {
+  const modifiers = msg.data as unknown as BehaviorModifiersData;
+  controller.handleBehaviorModifiers(modifiers);
+});
+
+// Velaris events (kiss, anti-kiss, unprecedented, etc.)
+connection.on('velaris_event', (msg: ServerMessage) => {
+  const eventData = msg.data as unknown as VelarisEventData;
+  controller.handleVelarisEvent(eventData);
+  console.log('[Velaris] Event:', eventData.eventType);
+
+  // Flash event type on status
+  const prevStatus = statusEl.textContent;
+  statusEl.textContent = `event: ${eventData.eventType}`;
+  statusEl.className = 'event';
+  setTimeout(() => {
+    statusEl.textContent = prevStatus || 'connected';
+    statusEl.className = 'connected';
+  }, 2000);
 });
 
 // --- User Input ---
@@ -208,7 +249,10 @@ userInput.addEventListener('keydown', (e) => {
 
 sendBtn.addEventListener('click', sendMessage);
 
-// --- WebXR Tracking (PSVR2 / SteamVR) ---
+// --- WebXR Session Lifecycle (PSVR2 / SteamVR) ---
+
+let xrSession: XRSession | null = null;
+let xrRefSpace: XRReferenceSpace | null = null;
 
 async function initWebXR(): Promise<void> {
   if (!navigator.xr) {
@@ -224,16 +268,118 @@ async function initWebXR(): Promise<void> {
     }
 
     console.log('[WebXR] VR session available — PSVR2/SteamVR detected');
-    // WebXR session would be initialized here when user enters VR mode
-    // For now, tracking data comes through the standard WebSocket
+
+    // Create Enter VR button
+    const vrBtn = document.createElement('button');
+    vrBtn.id = 'vr-btn';
+    vrBtn.textContent = 'Enter VR';
+    vrBtn.style.cssText = `
+      position: fixed; bottom: 20px; right: 20px; z-index: 1000;
+      padding: 12px 24px; font-size: 16px; font-weight: bold;
+      background: #cc4280; color: white; border: none; border-radius: 8px;
+      cursor: pointer; font-family: monospace;
+    `;
+    vrBtn.addEventListener('click', () => toggleVRSession());
+    document.body.appendChild(vrBtn);
   } catch (e) {
     console.log('[WebXR] Check failed:', e);
   }
 }
 
-// --- Animation Loop ---
+async function toggleVRSession(): Promise<void> {
+  if (xrSession) {
+    await xrSession.end();
+    return;
+  }
 
-let lastFrameStart = performance.now();
+  try {
+    // Request immersive-vr with hand tracking (PSVR2 Sense controllers)
+    xrSession = await navigator.xr!.requestSession('immersive-vr', {
+      requiredFeatures: ['local-floor'],
+      optionalFeatures: ['hand-tracking', 'bounded-floor'],
+    });
+
+    xrSession.addEventListener('end', () => {
+      xrSession = null;
+      xrRefSpace = null;
+      renderer.xr.enabled = false;
+      animLoop.start(); // resume normal animation loop
+
+      const btn = document.getElementById('vr-btn');
+      if (btn) btn.textContent = 'Enter VR';
+      console.log('[WebXR] VR session ended');
+    });
+
+    // Set up reference space
+    xrRefSpace = await xrSession.requestReferenceSpace('local-floor');
+
+    // Configure renderer for XR
+    renderer.xr.enabled = true;
+    await renderer.xr.setSession(xrSession);
+
+    // Stop regular animation loop — XR has its own
+    animLoop.stop();
+
+    // XR render loop
+    renderer.xr.setAnimationLoop((time: number, frame: XRFrame | undefined) => {
+      const dt = clock.getDelta();
+
+      if (frame && xrRefSpace) {
+        // Extract head pose
+        const viewerPose = frame.getViewerPose(xrRefSpace);
+        if (viewerPose) {
+          const pos = viewerPose.transform.position;
+          const headPos = { x: pos.x, y: pos.y, z: pos.z };
+
+          // Send tracking data to server
+          const trackingData: Record<string, unknown> = {
+            headPosition: headPos,
+          };
+
+          // Try to get hand positions (PSVR2 Sense controllers)
+          for (const inputSource of xrSession!.inputSources) {
+            if (inputSource.gripSpace) {
+              const gripPose = frame.getPose(inputSource.gripSpace, xrRefSpace!);
+              if (gripPose) {
+                const gp = gripPose.transform.position;
+                if (inputSource.handedness === 'left') {
+                  trackingData.leftHandPosition = { x: gp.x, y: gp.y, z: gp.z };
+                } else if (inputSource.handedness === 'right') {
+                  trackingData.rightHandPosition = { x: gp.x, y: gp.y, z: gp.z };
+                }
+              }
+            }
+          }
+
+          connection.sendTracking(trackingData);
+          controller.updateTracking({
+            headPosition: headPos,
+            headRotation: { x: 0, y: 0, z: 0 },
+          });
+        }
+      }
+
+      // Update avatar
+      controller.update(dt);
+
+      // Performance monitoring
+      const frameStart = performance.now();
+      renderer.render(scene, camera);
+      const frameTime = performance.now() - frameStart;
+      perfMonitor.recordFrame(frameTime);
+    });
+
+    const btn = document.getElementById('vr-btn');
+    if (btn) btn.textContent = 'Exit VR';
+    console.log('[WebXR] VR session started');
+
+  } catch (e) {
+    console.error('[WebXR] Failed to start VR session:', e);
+    xrSession = null;
+  }
+}
+
+// --- Animation Loop (non-VR) ---
 
 animLoop.onUpdate((dt, elapsed) => {
   const frameStart = performance.now();
@@ -241,10 +387,13 @@ animLoop.onUpdate((dt, elapsed) => {
   // Update avatar subsystems
   controller.update(dt);
 
+  // Update environment color transitions
+  updateEnvironmentFrame(dt);
+
   // Render
   renderer.render(scene, camera);
 
-  // Phase 5: Performance monitoring
+  // Performance monitoring
   const frameTime = performance.now() - frameStart;
   perfMonitor.recordFrame(frameTime);
   perfMonitor.evaluate(elapsed);
@@ -253,22 +402,21 @@ animLoop.onUpdate((dt, elapsed) => {
   const snap = perfMonitor.getSnapshot();
   const qualityIndicator = quality.quality === 'high' ? '' : ` [${quality.quality}]`;
   fpsEl.textContent = `${animLoop.fps} fps${qualityIndicator}`;
-
-  lastFrameStart = frameStart;
 });
 
 // --- Start Everything ---
 
 async function init(): Promise<void> {
-  console.log('[Eve] Avatar Engine initializing (Phase 1-5)...');
+  console.log('[Eve] Avatar Engine initializing (Phase 6 — Velaris Integration)...');
 
   await loadAvatar();
   initWebXR();
   connection.connect();
   animLoop.start();
 
-  console.log('[Eve] Ready — Phase 4: Memory, Dialogue FSM, Personality, Choreography');
-  console.log('[Eve] Ready — Phase 5: Performance Monitor, Breathing, Micro-Expressions, Telemetry');
+  console.log('[Eve] Ready — Velaris body engine active');
+  console.log('[Eve] Systems: EmoClaw bridge, gesture choreography, micro-expressions, breathing, spatial');
+  console.log('[Eve] WebXR: PSVR2/SteamVR session lifecycle ready');
 }
 
 init();

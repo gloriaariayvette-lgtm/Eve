@@ -57,8 +57,19 @@ export class PostureController {
   private activeGestures: ActiveGesture[] = [];
   private gestureTime = 0;
 
+  // Velaris: posture stability from EmoClaw groundedness (0=fidgety, 1=steady)
+  private stability = 0.7;
+
   setVRM(vrm: VRM): void {
     this.vrm = vrm;
+  }
+
+  /**
+   * Velaris: Set posture stability from EmoClaw groundedness.
+   * Higher stability = less idle sway, more controlled movements.
+   */
+  setStability(value: number): void {
+    this.stability = Math.max(0, Math.min(1, value));
   }
 
   /**
@@ -105,8 +116,9 @@ export class PostureController {
     const breathCycle = Math.sin(this.idleTime * 1.2) * 0.008;
     const breathPhase = Math.sin(this.idleTime * 1.2 + 0.5) * 0.003;
 
-    // Idle weight shift (very subtle sway)
-    const sway = Math.sin(this.idleTime * 0.3) * 0.004 + Math.sin(this.idleTime * 0.7) * 0.002;
+    // Idle weight shift (very subtle sway, reduced by stability)
+    const swayScale = 1.0 - this.stability * 0.6; // high stability = less sway
+    const sway = (Math.sin(this.idleTime * 0.3) * 0.004 + Math.sin(this.idleTime * 0.7) * 0.002) * swayScale;
 
     // Apply to bones
     const spine = this.vrm.humanoid?.getNormalizedBoneNode('spine');
