@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Velaris</string>
+    <string name="status_idle">ready</string>
+    <string name="status_listening">listening…</string>
+    <string name="status_thinking">thinking…</string>
+    <string name="status_speaking">speaking…</string>
+    <string name="status_disconnected">disconnected</string>
+    <string name="settings_title">Velaris Settings</string>
+    <string name="settings_url_label">Velaris URL</string>
+    <string name="settings_url_hint">http://100.72.225.119:8400</string>
+    <string name="settings_minimax_key_label">MiniMax API Key</string>
+    <string name="settings_minimax_voice_label">MiniMax Voice</string>
+    <string name="settings_save">Save</string>
+</resources>
