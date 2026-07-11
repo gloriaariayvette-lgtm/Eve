@@ -1,0 +1,77 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Vintos forge</title>
+<style>body{margin:0;background:#0b0a0c}#log{position:fixed;top:8px;left:8px;font:12px monospace;color:#c8a86a;z-index:9}</style></head>
+<body><div id="log"></div>
+<script>window.onerror=function(m,s,l){document.getElementById('log').textContent+="ERR: "+m+" @"+l+"\n";};</script>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+const API = location.origin;
+const BG = 0x0b0a0c;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(BG);
+scene.fog = new THREE.FogExp2(BG, 0.055);
+const cam = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.01, 200);
+cam.position.set(0, 1.2, 3.3); cam.lookAt(0, 0.95, 0);
+const ren = new THREE.WebGLRenderer({antialias:true});
+ren.outputColorSpace = THREE.SRGBColorSpace;
+ren.setSize(innerWidth, innerHeight);
+ren.domElement.style.cssText='position:fixed;inset:0;z-index:1;display:block;';
+document.body.appendChild(ren.domElement);
+function radial(r,g,b,a){ const c=document.createElement('canvas'); c.width=c.height=64; const x=c.getContext('2d');
+  const gr=x.createRadialGradient(32,32,1,32,32,32); gr.addColorStop(0,`rgba(${r},${g},${b},${a})`); gr.addColorStop(1,`rgba(${r},${g},${b},0)`);
+  x.fillStyle=gr; x.fillRect(0,0,64,64); const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; return t; }
+const floor=new THREE.Mesh(new THREE.CircleGeometry(26,64), new THREE.MeshBasicMaterial({color:0x08070a}));
+floor.rotation.x=-Math.PI/2; scene.add(floor);
+const sheenMat=new THREE.MeshBasicMaterial({map:radial(150,80,34,1.0), transparent:true, opacity:0.55, depthWrite:false, fog:false});
+sheenMat.polygonOffset=true; sheenMat.polygonOffsetFactor=-2; sheenMat.polygonOffsetUnits=-2;
+const sheen=new THREE.Mesh(new THREE.PlaneGeometry(4.5,3.2), sheenMat);
+sheen.rotation.x=-Math.PI/2; sheen.position.set(-1.6,0.03,-0.3); scene.add(sheen);
+const shC=document.createElement('canvas'); shC.width=shC.height=128; const shx=shC.getContext('2d');
+const shg=shx.createRadialGradient(64,64,2,64,64,64); shg.addColorStop(0,'rgba(0,0,0,0.5)'); shg.addColorStop(0.55,'rgba(0,0,0,0.18)'); shg.addColorStop(1,'rgba(0,0,0,0)');
+shx.fillStyle=shg; shx.fillRect(0,0,128,128);
+const shMat=new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(shC), transparent:true, depthWrite:false, fog:false});
+shMat.polygonOffset=true; shMat.polygonOffsetFactor=-4; shMat.polygonOffsetUnits=-4;
+const shadow=new THREE.Mesh(new THREE.PlaneGeometry(0.85,0.52), shMat);
+shadow.rotation.x=-Math.PI/2; shadow.position.set(0,0.06,0.05); scene.add(shadow);
+function wispTex(){ const c=document.createElement('canvas'); c.width=64; c.height=256; const x=c.getContext('2d');
+  for(let i=0;i<22;i++){ const yy=Math.random()*256; const xx=32+(Math.random()-0.5)*(24*(1-yy/300)+6);
+    const r=5+Math.random()*11*(1-yy/320); const a=0.05+Math.random()*0.06*(1-yy/256);
+    const g=x.createRadialGradient(xx,yy,0,xx,yy,r); g.addColorStop(0,`rgba(186,181,173,${a})`); g.addColorStop(1,'rgba(186,181,173,0)');
+    x.fillStyle=g; x.fillRect(0,0,64,256); }
+  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; return t; }
+const wtex=wispTex(); const wisps=[];
+for(let i=0;i<8;i++){ const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:wtex, transparent:true, opacity:0.62, depthWrite:false, fog:false}));
+  sp.userData={x:-2.4+Math.random()*3.6, y:0.3+Math.random()*2, z:-1.6-Math.random()*1.8, vy:0.14+Math.random()*0.12, sway:Math.random()*6, w:0.55+Math.random()*0.35, h:2.2+Math.random()*1.2};
+  sp.scale.set(sp.userData.w, sp.userData.h, 1); wisps.push(sp); scene.add(sp); }
+const etex=radial(255,190,110,1.0);
+const N=105, ep=new Float32Array(N*3), es=new Float32Array(N);
+function er(i){ ep[i*3]=(Math.random()-0.5)*8; ep[i*3+1]=Math.random()*0.3; ep[i*3+2]=(Math.random()-0.5)*5-0.6; }
+for(let i=0;i<N;i++){ er(i); ep[i*3+1]=Math.random()*3.2; es[i]=0.06+Math.random()*0.18; }
+const eg=new THREE.BufferGeometry(); eg.setAttribute('position', new THREE.BufferAttribute(ep,3));
+scene.add(new THREE.Points(eg, new THREE.PointsMaterial({map:etex, color:0xffb060, size:0.032, transparent:true, opacity:0.55, blending:THREE.AdditiveBlending, depthWrite:false, fog:false})));
+let mixer=null;
+const tex=new THREE.TextureLoader().load(API+'/avatar-models/mixamo/tex/atlas.png');
+tex.colorSpace=THREE.SRGBColorSpace; tex.flipY=true;
+new FBXLoader().load(API+'/avatar-models/mixamo/character.fbx', f=>{
+  const b=new THREE.Box3().setFromObject(f); const z=new THREE.Vector3(); b.getSize(z);
+  f.scale.setScalar(1.62/Math.max(0.0001,z.y));
+  f.traverse(o=>{ if(o.isMesh){ o.frustumCulled=false; o.material=new THREE.MeshBasicMaterial({map:tex, side:THREE.DoubleSide}); }});
+  scene.add(f);
+  mixer=new THREE.AnimationMixer(f);
+  if(f.animations.length) mixer.clipAction(f.animations[0]).play();
+});
+const clock=new THREE.Clock(); let t=0;
+(function loop(){ requestAnimationFrame(loop);
+  const dt=clock.getDelta(); t+=dt;
+  if(mixer) mixer.update(dt);
+  sheenMat.opacity = 0.52*(1+Math.sin(t*7.3)*0.1);
+  wisps.forEach(sp=>{ const u=sp.userData; u.y += u.vy*dt; const life=u.y/3.4; if(u.y>3.4) u.y=0.3;
+    sp.position.set(u.x+Math.sin(t*0.4+u.sway)*0.18, u.y, u.z);
+    sp.material.opacity = 0.62*Math.max(0,1-life)*(0.7+0.3*Math.sin(t*0.6+u.sway)); });
+  const p=eg.attributes.position;
+  for(let i=0;i<N;i++){ let y=p.getY(i)+es[i]*dt; if(y>3.4){ er(i); y=0.05; } p.setY(i,y); }
+  p.needsUpdate=true;
+  ren.render(scene,cam);
+})();
+</script></body></html>
