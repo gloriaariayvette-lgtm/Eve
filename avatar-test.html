@@ -11,9 +11,9 @@ const API = location.origin;
 const BG = 0x0b0a0c;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(BG);
-scene.fog = new THREE.FogExp2(BG, 0.05);
-const cam = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.01, 200);
-cam.position.set(0, 1.2, 3.3); cam.lookAt(0, 0.95, 0);
+scene.fog = new THREE.FogExp2(BG, 0.042);
+const cam = new THREE.PerspectiveCamera(52, innerWidth/innerHeight, 0.01, 200);
+cam.position.set(0, 1.25, 4.0); cam.lookAt(0, 0.92, 0);
 const ren = new THREE.WebGLRenderer({antialias:true});
 ren.outputColorSpace = THREE.SRGBColorSpace;
 ren.setSize(innerWidth, innerHeight);
@@ -27,7 +27,7 @@ floor.rotation.x=-Math.PI/2; scene.add(floor);
 const sheenMat=new THREE.MeshBasicMaterial({map:radial(150,80,34,1.0), transparent:true, opacity:0.55, depthWrite:false, fog:false});
 sheenMat.polygonOffset=true; sheenMat.polygonOffsetFactor=-2; sheenMat.polygonOffsetUnits=-2;
 const sheen=new THREE.Mesh(new THREE.PlaneGeometry(4.5,3.2), sheenMat);
-sheen.rotation.x=-Math.PI/2; sheen.position.set(-2.0,0.03,-1.2); scene.add(sheen);
+sheen.rotation.x=-Math.PI/2; sheen.position.set(-1.5,0.03,-1.4); scene.add(sheen);
 const shC=document.createElement('canvas'); shC.width=shC.height=128; const shx=shC.getContext('2d');
 const shg=shx.createRadialGradient(64,64,2,64,64,64); shg.addColorStop(0,'rgba(0,0,0,0.5)'); shg.addColorStop(0.55,'rgba(0,0,0,0.18)'); shg.addColorStop(1,'rgba(0,0,0,0)');
 shx.fillStyle=shg; shx.fillRect(0,0,128,128);
@@ -36,7 +36,7 @@ shMat.polygonOffset=true; shMat.polygonOffsetFactor=-4; shMat.polygonOffsetUnits
 const shadow=new THREE.Mesh(new THREE.PlaneGeometry(0.85,0.52), shMat);
 shadow.rotation.x=-Math.PI/2; shadow.position.set(0,0.06,0.05); scene.add(shadow);
 const forgeGlow=new THREE.Sprite(new THREE.SpriteMaterial({map:radial(255,140,50,1.0), transparent:true, opacity:0.55, depthWrite:false, blending:THREE.AdditiveBlending, fog:false}));
-forgeGlow.position.set(-2.9,0.95,-2.4); forgeGlow.scale.set(2.4,2.0,1); scene.add(forgeGlow);
+forgeGlow.position.set(-1.7,0.95,-2.6); forgeGlow.scale.set(2.4,2.0,1); scene.add(forgeGlow);
 function wispTex(){ const c=document.createElement('canvas'); c.width=64; c.height=256; const x=c.getContext('2d');
   for(let i=0;i<22;i++){ const yy=Math.random()*256; const xx=32+(Math.random()-0.5)*(24*(1-yy/300)+6);
     const r=5+Math.random()*11*(1-yy/320); const a=0.05+Math.random()*0.06*(1-yy/256);
@@ -45,11 +45,11 @@ function wispTex(){ const c=document.createElement('canvas'); c.width=64; c.heig
   const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; return t; }
 const wtex=wispTex(); const wisps=[];
 for(let i=0;i<8;i++){ const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:wtex, transparent:true, opacity:0.62, depthWrite:false, fog:false}));
-  sp.userData={x:-2.6+Math.random()*2.4, y:0.3+Math.random()*2, z:-2.2-Math.random()*1.4, vy:0.14+Math.random()*0.12, sway:Math.random()*6, w:0.55+Math.random()*0.35, h:2.2+Math.random()*1.2};
+  sp.userData={x:-2.2+Math.random()*2.2, y:0.3+Math.random()*2, z:-2.2-Math.random()*1.4, vy:0.14+Math.random()*0.12, sway:Math.random()*6, w:0.55+Math.random()*0.35, h:2.2+Math.random()*1.2};
   sp.scale.set(sp.userData.w, sp.userData.h, 1); wisps.push(sp); scene.add(sp); }
 const etex=radial(255,190,110,1.0);
 const N=105, ep=new Float32Array(N*3), es=new Float32Array(N);
-function er(i){ ep[i*3]=-3.2+Math.random()*3.0; ep[i*3+1]=Math.random()*0.3; ep[i*3+2]=(Math.random()-0.5)*4-1.4; }
+function er(i){ ep[i*3]=-2.6+Math.random()*2.6; ep[i*3+1]=Math.random()*0.3; ep[i*3+2]=(Math.random()-0.5)*4-1.2; }
 for(let i=0;i<N;i++){ er(i); ep[i*3+1]=Math.random()*3.2; es[i]=0.06+Math.random()*0.18; }
 const eg=new THREE.BufferGeometry(); eg.setAttribute('position', new THREE.BufferAttribute(ep,3));
 scene.add(new THREE.Points(eg, new THREE.PointsMaterial({map:etex, color:0xffb060, size:0.032, transparent:true, opacity:0.55, blending:THREE.AdditiveBlending, depthWrite:false, fog:false})));
@@ -67,17 +67,17 @@ new FBXLoader().load(API+'/avatar-models/mixamo/character.fbx', f=>{
 function loadProp(url, place){
   new FBXLoader().load(url, f=>{
     const b=new THREE.Box3().setFromObject(f); const z=new THREE.Vector3(); b.getSize(z);
-    log(url.split('/').pop()+' '+z.x.toFixed(2)+' '+z.y.toFixed(2)+' '+z.z.toFixed(2));
     const md=Math.max(z.x,z.y,z.z); const sc=place.size/Math.max(0.05,md);
-    if(!isFinite(sc)){ log('bad scale, skip'); return; }
+    if(!isFinite(sc)){ log('bad scale'); return; }
     f.scale.setScalar(sc);
-    f.traverse(o=>{ if(o.isMesh){ o.frustumCulled=false; o.material=new THREE.MeshBasicMaterial({color:0x3a352e, side:THREE.DoubleSide}); }});
+    f.traverse(o=>{ if(o.isMesh){ o.frustumCulled=false; o.material=new THREE.MeshBasicMaterial({color:0x6b5f50, side:THREE.DoubleSide}); }});
     const b2=new THREE.Box3().setFromObject(f); f.position.set(place.x, -b2.min.y, place.z); f.rotation.y=place.ry;
     scene.add(f);
+    log(url.split('/').pop()+' placed');
   }, undefined, e=>log('prop fail '+url.split('/').pop()));
 }
-loadProp(API+'/avatar-models/forge.fbx', {x:-2.9, z:-2.4, size:2.6, ry:0.5});
-loadProp(API+'/avatar-models/anvil.fbx', {x:1.7, z:0.5, size:1.1, ry:-0.4});
+loadProp(API+'/avatar-models/forge.fbx', {x:-1.7, z:-2.8, size:3.0, ry:0.6});
+loadProp(API+'/avatar-models/anvil.fbx', {x:1.15, z:0.8, size:1.15, ry:-0.5});
 const clock=new THREE.Clock(); let t=0;
 (function loop(){ requestAnimationFrame(loop);
   const dt=clock.getDelta(); t+=dt;
