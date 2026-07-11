@@ -37,6 +37,8 @@ const shadow=new THREE.Mesh(new THREE.PlaneGeometry(0.85,0.52), shMat);
 shadow.rotation.x=-Math.PI/2; shadow.position.set(0,0.06,0.05); scene.add(shadow);
 const forgeGlow=new THREE.Sprite(new THREE.SpriteMaterial({map:radial(255,140,50,1.0), transparent:true, opacity:0.7, depthWrite:false, blending:THREE.AdditiveBlending, fog:false}));
 forgeGlow.position.set(-1.7,0.75,-3.05); forgeGlow.scale.set(1.2,1.1,1); scene.add(forgeGlow);
+const glint=new THREE.Sprite(new THREE.SpriteMaterial({map:radial(255,238,214,1.0), transparent:true, opacity:0.3, depthWrite:false, blending:THREE.AdditiveBlending, fog:false}));
+glint.position.set(0.60,0.36,1.05); glint.scale.set(0.55,0.13,1); scene.add(glint);
 function wispTex(){ const c=document.createElement('canvas'); c.width=64; c.height=256; const x=c.getContext('2d');
   for(let i=0;i<22;i++){ const yy=Math.random()*256; const xx=32+(Math.random()-0.5)*(24*(1-yy/300)+6);
     const r=5+Math.random()*11*(1-yy/320); const a=0.05+Math.random()*0.06*(1-yy/256);
@@ -85,13 +87,13 @@ function loadProp(url, place){
   }, undefined, e=>log('prop fail '+url.split('/').pop()));
 }
 loadProp(API+'/avatar-models/forge.fbx', {x:-1.7, z:-2.8, size:3.0, ry:0.6, color:0x4a3a30});
-loadProp(API+'/avatar-models/anvil.fbx', {x:0.72, z:1.0, size:0.95, ry:-0.5, keep:['Anvil'], map:API+'/avatar-models/tex_bs/Textures/Anvil/Anvil_BaseColor.png', tint:0x555050});
+loadProp(API+'/avatar-models/anvil.fbx', {x:0.72, z:1.0, size:0.95, ry:1.07, keep:['Anvil'], map:API+'/avatar-models/tex_bs/Textures/Anvil/Anvil_BaseColor.png', tint:0x494540});
 const clock=new THREE.Clock(); let t=0;
 (function loop(){ requestAnimationFrame(loop);
   const dt=clock.getDelta(); t+=dt;
   if(mixer) mixer.update(dt);
   const fl = 1 + Math.sin(t*7.3)*0.15 + Math.sin(t*17.1)*0.08 + Math.random()*0.06;
-  sheenMat.opacity = 0.5*fl; forgeGlow.material.opacity = 0.65*fl;
+  sheenMat.opacity = 0.5*fl; forgeGlow.material.opacity = 0.65*fl; glint.material.opacity = 0.28*fl;
   wisps.forEach(sp=>{ const u=sp.userData; u.y += u.vy*dt; const life=u.y/3.4; if(u.y>3.4) u.y=0.3;
     sp.position.set(u.x+Math.sin(t*0.4+u.sway)*0.18, u.y, u.z);
     sp.material.opacity = 0.62*Math.max(0,1-life)*(0.7+0.3*Math.sin(t*0.6+u.sway)); });
