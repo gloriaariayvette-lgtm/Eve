@@ -11,7 +11,7 @@ const API = location.origin;
 const BG = 0x0b0a0c;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(BG);
-scene.fog = new THREE.FogExp2(BG, 0.058);
+scene.fog = new THREE.FogExp2(BG, 0.05);
 const cam = new THREE.PerspectiveCamera(52, innerWidth/innerHeight, 0.01, 200);
 cam.position.set(0, 1.25, 4.0); cam.lookAt(0, 0.92, 0);
 const ren = new THREE.WebGLRenderer({antialias:true});
@@ -26,16 +26,16 @@ function radial(r,g,b,a){ const c=document.createElement('canvas'); c.width=c.he
   const gr=x.createRadialGradient(32,32,1,32,32,32); gr.addColorStop(0,`rgba(${r},${g},${b},${a})`); gr.addColorStop(1,`rgba(${r},${g},${b},0)`);
   x.fillStyle=gr; x.fillRect(0,0,64,64); const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; return t; }
 function brickTex(){ const c=document.createElement('canvas'); c.width=c.height=256; const x=c.getContext('2d');
-  x.fillStyle='#17100c'; x.fillRect(0,0,256,256);
+  x.fillStyle='#241812'; x.fillRect(0,0,256,256);
   const bh=30,bw=58,mg=4;
   for(let row=0,y=0;y<260;row++,y+=bh){ const off=(row%2)*(bw/2);
-    for(let bx=-bw;bx<256;bx+=bw){ const s=0.75+Math.random()*0.3;
-      x.fillStyle=`rgb(${Math.floor(54*s)},${Math.floor(32*s)},${Math.floor(24*s)})`;
+    for(let bx=-bw;bx<256;bx+=bw){ const s=0.72+Math.random()*0.36;
+      x.fillStyle=`rgb(${Math.floor(80*s)},${Math.floor(48*s)},${Math.floor(37*s)})`;
       x.fillRect(bx+off+mg/2,y+mg/2,bw-mg,bh-mg); } }
   const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(40,40); t.anisotropy=8; return t; }
 function metalTex(){ const c=document.createElement('canvas'); c.width=c.height=128; const x=c.getContext('2d');
-  x.fillStyle='#16130f'; x.fillRect(0,0,128,128);
-  for(let i=0;i<2400;i++){ const v=12+Math.random()*22; x.fillStyle=`rgba(${v},${v-3},${v-6},0.4)`; x.fillRect(Math.random()*128,Math.random()*128,2,2); }
+  x.fillStyle='#201c15'; x.fillRect(0,0,128,128);
+  for(let i=0;i<2400;i++){ const v=16+Math.random()*30; x.fillStyle=`rgba(${v},${v-3},${v-7},0.4)`; x.fillRect(Math.random()*128,Math.random()*128,2,2); }
   const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; return t; }
 const floor=new THREE.Mesh(new THREE.CircleGeometry(26,64), new THREE.MeshBasicMaterial({color:0x08070a}));
 floor.rotation.x=-Math.PI/2; scene.add(floor);
@@ -50,7 +50,7 @@ function softShadow(w,h,x,z,a){ const cc=document.createElement('canvas'); cc.wi
   mm.polygonOffset=true; mm.polygonOffsetFactor=-4; mm.polygonOffsetUnits=-4;
   const me=new THREE.Mesh(new THREE.PlaneGeometry(w,h), mm); me.rotation.x=-Math.PI/2; me.position.set(x,0.05,z); scene.add(me); }
 softShadow(0.85,0.52,0,0.05,0.5);
-softShadow(1.4,1.0,-1.7,-2.6,0.42);
+softShadow(1.5,1.0,-1.7,-2.6,0.4);
 const forgeGlow=new THREE.Sprite(new THREE.SpriteMaterial({map:radial(255,140,50,1.0), transparent:true, opacity:0.7, depthWrite:false, blending:THREE.AdditiveBlending, fog:false}));
 forgeGlow.position.set(-1.7,0.75,-3.05); forgeGlow.scale.set(1.2,1.1,1); scene.add(forgeGlow);
 const bottomGlow=new THREE.Sprite(new THREE.SpriteMaterial({map:radial(255,150,60,1.0), transparent:true, opacity:0.9, depthWrite:false, blending:THREE.AdditiveBlending, fog:false}));
@@ -87,10 +87,10 @@ function loadProp(url, place){
   new FBXLoader().load(url, f=>{
     let single=null, forgePick=null, bronzeMat=null;
     if(place.forgeSkin){
-      const brickMat=new THREE.MeshBasicMaterial({map:brickTex(), transparent:true, opacity:0.9, side:THREE.DoubleSide});
-      const metalMat=new THREE.MeshBasicMaterial({map:metalTex(), transparent:true, opacity:0.9, side:THREE.DoubleSide});
-      const goldMat=new THREE.MeshBasicMaterial({color:0x543a1e, transparent:true, opacity:0.9, side:THREE.DoubleSide});
-      bronzeMat=new THREE.MeshBasicMaterial({color:0x7a5230, side:THREE.DoubleSide});
+      const brickMat=new THREE.MeshBasicMaterial({map:brickTex(), side:THREE.DoubleSide});
+      const metalMat=new THREE.MeshBasicMaterial({map:metalTex(), side:THREE.DoubleSide});
+      const goldMat=new THREE.MeshBasicMaterial({color:0x74501f, side:THREE.DoubleSide});
+      bronzeMat=new THREE.MeshBasicMaterial({color:0x8a5c30, side:THREE.DoubleSide});
       forgePick=n=>{ n=(n||'').toLowerCase(); if(n.indexOf('stone')>=0||n.indexOf('brick')>=0)return brickMat; if(n.indexOf('gold')>=0)return goldMat; return metalMat; };
     } else if(place.pbr){
       const tl=new THREE.TextureLoader();
