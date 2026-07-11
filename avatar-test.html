@@ -19,6 +19,10 @@ ren.outputColorSpace = THREE.SRGBColorSpace;
 ren.setSize(innerWidth, innerHeight);
 ren.domElement.style.cssText='position:fixed;inset:0;z-index:1;display:block;';
 document.body.appendChild(ren.domElement);
+// lights — only affect the anvil (the one lit material); everything else is MeshBasic and ignores them
+scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+const dl1=new THREE.DirectionalLight(0xfff0d8, 2.6); dl1.position.set(0.6,2.2,3.0); scene.add(dl1);
+const dl2=new THREE.DirectionalLight(0xff9040, 1.4); dl2.position.set(-2.0,1.2,0.6); scene.add(dl2);
 function radial(r,g,b,a){ const c=document.createElement('canvas'); c.width=c.height=64; const x=c.getContext('2d');
   const gr=x.createRadialGradient(32,32,1,32,32,32); gr.addColorStop(0,`rgba(${r},${g},${b},${a})`); gr.addColorStop(1,`rgba(${r},${g},${b},0)`);
   x.fillStyle=gr; x.fillRect(0,0,64,64); const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; return t; }
@@ -37,8 +41,6 @@ const shadow=new THREE.Mesh(new THREE.PlaneGeometry(0.85,0.52), shMat);
 shadow.rotation.x=-Math.PI/2; shadow.position.set(0,0.06,0.05); scene.add(shadow);
 const forgeGlow=new THREE.Sprite(new THREE.SpriteMaterial({map:radial(255,140,50,1.0), transparent:true, opacity:0.7, depthWrite:false, blending:THREE.AdditiveBlending, fog:false}));
 forgeGlow.position.set(-1.7,0.75,-3.05); forgeGlow.scale.set(1.2,1.1,1); scene.add(forgeGlow);
-const glint=new THREE.Sprite(new THREE.SpriteMaterial({map:radial(255,238,214,1.0), transparent:true, opacity:0.3, depthWrite:false, blending:THREE.AdditiveBlending, fog:false}));
-glint.position.set(0.60,0.36,1.05); glint.scale.set(0.55,0.13,1); scene.add(glint);
 function wispTex(){ const c=document.createElement('canvas'); c.width=64; c.height=256; const x=c.getContext('2d');
   for(let i=0;i<22;i++){ const yy=Math.random()*256; const xx=32+(Math.random()-0.5)*(24*(1-yy/300)+6);
     const r=5+Math.random()*11*(1-yy/320); const a=0.05+Math.random()*0.06*(1-yy/256);
@@ -68,11 +70,22 @@ new FBXLoader().load(API+'/avatar-models/mixamo/character.fbx', f=>{
 });
 function loadProp(url, place){
   new FBXLoader().load(url, f=>{
-    let ptex=null;
-    if(place.map){ ptex=new THREE.TextureLoader().load(place.map); ptex.colorSpace=THREE.SRGBColorSpace; ptex.flipY=false; }
+    let makeMat;
+    if(place.pbr){
+      const tl=new THREE.TextureLoader();
+      const bc=tl.load(place.pbr.base); bc.colorSpace=THREE.SRGBColorSpace; bc.flipY=false;
+      const rg=tl.load(place.pbr.rough); rg.flipY=false;
+      const nm=tl.load(place.pbr.normal); nm.flipY=false;
+      makeMat=()=>new THREE.MeshStandardMaterial({map:bc, roughnessMap:rg, normalMap:nm, metalness:0.6, roughness:0.85, color:place.tint||0xffffff, side:THREE.DoubleSide});
+    } else if(place.map){
+      const pt=new THREE.TextureLoader().load(place.map); pt.colorSpace=THREE.SRGBColorSpace; pt.flipY=false;
+      makeMat=()=>new THREE.MeshBasicMaterial({map:pt, color:place.tint||0xffffff, side:THREE.DoubleSide});
+    } else {
+      makeMat=()=>new THREE.MeshBasicMaterial({color:place.color, side:THREE.DoubleSide});
+    }
     f.traverse(o=>{ if(o.isMesh){
       if(place.keep && place.keep.indexOf(o.name)<0){ o.visible=false; }
-      else { o.frustumCulled=false; o.material = ptex ? new THREE.MeshBasicMaterial({map:ptex, color:place.tint||0xffffff, side:THREE.DoubleSide}) : new THREE.MeshBasicMaterial({color:place.color, side:THREE.DoubleSide}); } }});
+      else { o.frustumCulled=false; o.material=makeMat(); } }});
     f.updateMatrixWorld(true);
     const vb=new THREE.Box3(); f.traverse(o=>{ if(o.isMesh&&o.visible) vb.expandByObject(o); });
     const z=new THREE.Vector3(); vb.getSize(z);
@@ -87,13 +100,16 @@ function loadProp(url, place){
   }, undefined, e=>log('prop fail '+url.split('/').pop()));
 }
 loadProp(API+'/avatar-models/forge.fbx', {x:-1.7, z:-2.8, size:3.0, ry:0.6, color:0x4a3a30});
-loadProp(API+'/avatar-models/anvil.fbx', {x:0.72, z:1.0, size:0.95, ry:1.07, keep:['Anvil'], map:API+'/avatar-models/tex_bs/Textures/Anvil/Anvil_BaseColor.png', tint:0x494540});
+loadProp(API+'/avatar-models/anvil.fbx', {x:0.72, z:1.0, size:0.95, ry:1.07, keep:['Anvil'], tint:0x8f8880, pbr:{
+  base:API+'/avatar-models/tex_bs/Textures/Anvil/Anvil_BaseColor.png',
+  rough:API+'/avatar-models/tex_bs/Textures/Anvil/Anvil_Roughness.png',
+  normal:API+'/avatar-models/tex_bs/Textures/Anvil/Anvil_Normal.png'}});
 const clock=new THREE.Clock(); let t=0;
 (function loop(){ requestAnimationFrame(loop);
   const dt=clock.getDelta(); t+=dt;
   if(mixer) mixer.update(dt);
   const fl = 1 + Math.sin(t*7.3)*0.15 + Math.sin(t*17.1)*0.08 + Math.random()*0.06;
-  sheenMat.opacity = 0.5*fl; forgeGlow.material.opacity = 0.65*fl; glint.material.opacity = 0.28*fl;
+  sheenMat.opacity = 0.5*fl; forgeGlow.material.opacity = 0.65*fl;
   wisps.forEach(sp=>{ const u=sp.userData; u.y += u.vy*dt; const life=u.y/3.4; if(u.y>3.4) u.y=0.3;
     sp.position.set(u.x+Math.sin(t*0.4+u.sway)*0.18, u.y, u.z);
     sp.material.opacity = 0.62*Math.max(0,1-life)*(0.7+0.3*Math.sin(t*0.6+u.sway)); });
