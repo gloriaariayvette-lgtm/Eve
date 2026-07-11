@@ -35,7 +35,6 @@ const shMat=new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(shC), trans
 shMat.polygonOffset=true; shMat.polygonOffsetFactor=-4; shMat.polygonOffsetUnits=-4;
 const shadow=new THREE.Mesh(new THREE.PlaneGeometry(0.85,0.52), shMat);
 shadow.rotation.x=-Math.PI/2; shadow.position.set(0,0.06,0.05); scene.add(shadow);
-// forge-mouth fire — small, sits BEHIND the forge so it peeks through the opening
 const forgeGlow=new THREE.Sprite(new THREE.SpriteMaterial({map:radial(255,140,50,1.0), transparent:true, opacity:0.7, depthWrite:false, blending:THREE.AdditiveBlending, fog:false}));
 forgeGlow.position.set(-1.7,0.75,-3.05); forgeGlow.scale.set(1.2,1.1,1); scene.add(forgeGlow);
 function wispTex(){ const c=document.createElement('canvas'); c.width=64; c.height=256; const x=c.getContext('2d');
@@ -67,19 +66,24 @@ new FBXLoader().load(API+'/avatar-models/mixamo/character.fbx', f=>{
 });
 function loadProp(url, place){
   new FBXLoader().load(url, f=>{
-    const b=new THREE.Box3().setFromObject(f); const z=new THREE.Vector3(); b.getSize(z);
+    f.traverse(o=>{ if(o.isMesh){
+      if(place.keep && place.keep.indexOf(o.name)<0){ o.visible=false; }
+      else { o.frustumCulled=false; o.material=new THREE.MeshBasicMaterial({color:place.color, side:THREE.DoubleSide}); } }});
+    f.updateMatrixWorld(true);
+    const vb=new THREE.Box3(); f.traverse(o=>{ if(o.isMesh&&o.visible) vb.expandByObject(o); });
+    const z=new THREE.Vector3(); vb.getSize(z);
     const md=Math.max(z.x,z.y,z.z); const sc=place.size/Math.max(0.05,md);
-    if(!isFinite(sc)){ log('bad scale'); return; }
-    f.scale.setScalar(sc);
-    f.traverse(o=>{ if(o.isMesh){ o.frustumCulled=false; o.material=new THREE.MeshBasicMaterial({color:place.color, side:THREE.FrontSide});
-      if(place.names) log('  '+o.name+' ('+(o.geometry.attributes.position.count)+'v)'); }});
-    const b2=new THREE.Box3().setFromObject(f); f.position.set(place.x, -b2.min.y, place.z); f.rotation.y=place.ry;
+    if(!isFinite(sc)||md<=0){ log('bad scale '+url.split('/').pop()); return; }
+    f.scale.setScalar(sc); f.rotation.y=place.ry; f.updateMatrixWorld(true);
+    const vb2=new THREE.Box3(); f.traverse(o=>{ if(o.isMesh&&o.visible) vb2.expandByObject(o); });
+    const ctr=new THREE.Vector3(); vb2.getCenter(ctr);
+    f.position.set(place.x-ctr.x, -vb2.min.y, place.z-ctr.z);
     scene.add(f);
     log(url.split('/').pop()+' placed');
   }, undefined, e=>log('prop fail '+url.split('/').pop()));
 }
-loadProp(API+'/avatar-models/forge.fbx', {x:-1.7, z:-2.8, size:3.0, ry:0.6, color:0x2f2a24});
-loadProp(API+'/avatar-models/anvil.fbx', {x:0.85, z:0.9, size:1.15, ry:-0.5, color:0x6b5f50, names:true});
+loadProp(API+'/avatar-models/forge.fbx', {x:-1.7, z:-2.8, size:3.0, ry:0.6, color:0x4a3a30});
+loadProp(API+'/avatar-models/anvil.fbx', {x:0.95, z:0.9, size:0.95, ry:-0.5, color:0x2a2622, keep:['Anvil']});
 const clock=new THREE.Clock(); let t=0;
 (function loop(){ requestAnimationFrame(loop);
   const dt=clock.getDelta(); t+=dt;
