@@ -32,7 +32,7 @@ function brickTex(){ const c=document.createElement('canvas'); c.width=c.height=
     for(let bx=-bw;bx<256;bx+=bw){ const s=0.7+Math.random()*0.4;
       x.fillStyle=`rgb(${Math.floor(96*s)},${Math.floor(55*s)},${Math.floor(42*s)})`;
       x.fillRect(bx+off+mg/2,y+mg/2,bw-mg,bh-mg); } }
-  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(2,2); return t; }
+  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(40,40); t.anisotropy=8; return t; }
 function metalTex(){ const c=document.createElement('canvas'); c.width=c.height=128; const x=c.getContext('2d');
   x.fillStyle='#232019'; x.fillRect(0,0,128,128);
   for(let i=0;i<2400;i++){ const v=18+Math.random()*34; x.fillStyle=`rgba(${v},${v-3},${v-7},0.4)`; x.fillRect(Math.random()*128,Math.random()*128,2,2); }
@@ -52,6 +52,8 @@ const shadow=new THREE.Mesh(new THREE.PlaneGeometry(0.85,0.52), shMat);
 shadow.rotation.x=-Math.PI/2; shadow.position.set(0,0.06,0.05); scene.add(shadow);
 const forgeGlow=new THREE.Sprite(new THREE.SpriteMaterial({map:radial(255,140,50,1.0), transparent:true, opacity:0.7, depthWrite:false, blending:THREE.AdditiveBlending, fog:false}));
 forgeGlow.position.set(-1.7,0.75,-3.05); forgeGlow.scale.set(1.2,1.1,1); scene.add(forgeGlow);
+const bottomGlow=new THREE.Sprite(new THREE.SpriteMaterial({map:radial(255,150,60,1.0), transparent:true, opacity:0.9, depthWrite:false, blending:THREE.AdditiveBlending, fog:false}));
+bottomGlow.position.set(-1.9,0.4,-2.35); bottomGlow.scale.set(0.7,0.55,1); scene.add(bottomGlow);
 function wispTex(){ const c=document.createElement('canvas'); c.width=64; c.height=256; const x=c.getContext('2d');
   for(let i=0;i<22;i++){ const yy=Math.random()*256; const xx=32+(Math.random()-0.5)*(24*(1-yy/300)+6);
     const r=5+Math.random()*11*(1-yy/320); const a=0.05+Math.random()*0.06*(1-yy/256);
@@ -59,13 +61,14 @@ function wispTex(){ const c=document.createElement('canvas'); c.width=64; c.heig
     x.fillStyle=g; x.fillRect(0,0,64,256); }
   const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; return t; }
 const wtex=wispTex(); const wisps=[];
-for(let i=0;i<8;i++){ const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:wtex, transparent:true, opacity:0.62, depthWrite:false, fog:false}));
-  sp.userData={x:-2.2+Math.random()*2.2, y:0.3+Math.random()*2, z:-2.2-Math.random()*1.4, vy:0.14+Math.random()*0.12, sway:Math.random()*6, w:0.55+Math.random()*0.35, h:2.2+Math.random()*1.2};
+for(let i=0;i<10;i++){ const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:wtex, transparent:true, opacity:0.72, depthWrite:false, fog:false}));
+  const left = i<5; const bx = left ? (-2.4+Math.random()*1.8) : (0.2+Math.random()*1.6);
+  sp.userData={x:bx, y:0.3+Math.random()*2, z:left?(-2.2-Math.random()*1.4):(0.4-Math.random()*1.2), vy:0.14+Math.random()*0.12, sway:Math.random()*6, w:0.55+Math.random()*0.35, h:2.2+Math.random()*1.2};
   sp.scale.set(sp.userData.w, sp.userData.h, 1); wisps.push(sp); scene.add(sp); }
 const etex=radial(255,190,110,1.0);
-const N=105, ep=new Float32Array(N*3), es=new Float32Array(N);
-function er(i){ ep[i*3]=-2.6+Math.random()*2.6; ep[i*3+1]=Math.random()*0.3; ep[i*3+2]=(Math.random()-0.5)*4-1.2; }
-for(let i=0;i<N;i++){ er(i); ep[i*3+1]=Math.random()*3.2; es[i]=0.06+Math.random()*0.18; }
+const N=110, ep=new Float32Array(N*3), es=new Float32Array(N);
+function er(i){ if(i%2){ ep[i*3]=0.1+Math.random()*1.5; ep[i*3+2]=0.3-Math.random()*1.4; } else { ep[i*3]=-2.6+Math.random()*1.8; ep[i*3+2]=-2.0-Math.random()*1.0; } ep[i*3+1]=Math.random()*0.3; }
+for(let i=0;i<N;i++){ er(i); ep[i*3+1]=Math.random()*3.0; es[i]=0.06+Math.random()*0.18; }
 const eg=new THREE.BufferGeometry(); eg.setAttribute('position', new THREE.BufferAttribute(ep,3));
 scene.add(new THREE.Points(eg, new THREE.PointsMaterial({map:etex, color:0xffb060, size:0.032, transparent:true, opacity:0.55, blending:THREE.AdditiveBlending, depthWrite:false, fog:false})));
 let mixer=null;
@@ -85,7 +88,7 @@ function loadProp(url, place){
     if(place.forgeSkin){
       const brickMat=new THREE.MeshBasicMaterial({map:brickTex(), side:THREE.DoubleSide});
       const metalMat=new THREE.MeshBasicMaterial({map:metalTex(), side:THREE.DoubleSide});
-      const goldMat=new THREE.MeshBasicMaterial({color:0x8f7228, side:THREE.DoubleSide});
+      const goldMat=new THREE.MeshBasicMaterial({color:0x86592e, side:THREE.DoubleSide});
       forgePick=n=>{ n=(n||'').toLowerCase(); if(n.indexOf('stone')>=0||n.indexOf('brick')>=0)return brickMat; if(n.indexOf('gold')>=0)return goldMat; return metalMat; };
     } else if(place.pbr){
       const tl=new THREE.TextureLoader();
@@ -99,8 +102,10 @@ function loadProp(url, place){
     f.traverse(o=>{ if(o.isMesh){
       if(place.keep && place.keep.indexOf(o.name)<0){ o.visible=false; return; }
       o.frustumCulled=false;
-      if(forgePick){ o.material = Array.isArray(o.material)? o.material.map(m=>forgePick(m&&m.name)) : forgePick(o.material&&o.material.name); }
-      else { o.material=single(); } }});
+      if(forgePick){
+        if(place.debug) log('mesh '+o.name+' | '+(Array.isArray(o.material)?o.material.map(m=>m&&m.name).join(','):(o.material&&o.material.name)));
+        o.material = Array.isArray(o.material)? o.material.map(m=>forgePick(m&&m.name)) : forgePick(o.material&&o.material.name);
+      } else { o.material=single(); } }});
     f.updateMatrixWorld(true);
     const vb=new THREE.Box3(); f.traverse(o=>{ if(o.isMesh&&o.visible) vb.expandByObject(o); });
     const z=new THREE.Vector3(); vb.getSize(z);
@@ -114,7 +119,7 @@ function loadProp(url, place){
     log(url.split('/').pop()+' placed');
   }, undefined, e=>log('prop fail '+url.split('/').pop()));
 }
-loadProp(API+'/avatar-models/forge.fbx', {x:-1.7, z:-2.8, size:3.0, ry:0.6, forgeSkin:true});
+loadProp(API+'/avatar-models/forge.fbx', {x:-1.7, z:-2.8, size:3.0, ry:0.6, forgeSkin:true, debug:true});
 loadProp(API+'/avatar-models/anvil.fbx', {x:0.72, z:1.0, size:0.95, ry:1.07, keep:['Anvil'], tint:0x8f8880, pbr:{
   base:API+'/avatar-models/tex_bs/Textures/Anvil/Anvil_BaseColor.png',
   rough:API+'/avatar-models/tex_bs/Textures/Anvil/Anvil_Roughness.png',
@@ -124,10 +129,10 @@ const clock=new THREE.Clock(); let t=0;
   const dt=clock.getDelta(); t+=dt;
   if(mixer) mixer.update(dt);
   const fl = 1 + Math.sin(t*7.3)*0.15 + Math.sin(t*17.1)*0.08 + Math.random()*0.06;
-  sheenMat.opacity = 0.5*fl; forgeGlow.material.opacity = 0.65*fl;
+  sheenMat.opacity = 0.5*fl; forgeGlow.material.opacity = 0.65*fl; bottomGlow.material.opacity = 0.82*fl;
   wisps.forEach(sp=>{ const u=sp.userData; u.y += u.vy*dt; const life=u.y/3.4; if(u.y>3.4) u.y=0.3;
     sp.position.set(u.x+Math.sin(t*0.4+u.sway)*0.18, u.y, u.z);
-    sp.material.opacity = 0.62*Math.max(0,1-life)*(0.7+0.3*Math.sin(t*0.6+u.sway)); });
+    sp.material.opacity = 0.72*Math.max(0,1-life)*(0.7+0.3*Math.sin(t*0.6+u.sway)); });
   const p=eg.attributes.position;
   for(let i=0;i<N;i++){ let y=p.getY(i)+es[i]*dt; if(y>3.4){ er(i); y=0.05; } p.setY(i,y); }
   p.needsUpdate=true;
