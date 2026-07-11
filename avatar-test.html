@@ -1,6 +1,9 @@
 <!DOCTYPE html><html><head><meta charset="utf-8"><title>Vintos forge</title>
-<style>body{margin:0;background:#0b0a0c}#log{position:fixed;top:8px;left:8px;font:11px monospace;color:#c8a86a;z-index:9;white-space:pre}</style></head>
+<style>body{margin:0;background:#0b0a0c}#log{position:fixed;top:8px;left:8px;font:11px monospace;color:#c8a86a;z-index:9;white-space:pre}
+#ui{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:10;display:flex;gap:10px}
+#ui button{padding:12px 16px;font:14px monospace;background:#1a1712;color:#e8d9b0;border:1px solid #5a4a38;border-radius:8px}</style></head>
 <body><div id="log"></div>
+<div id="ui"><button onclick="flipMaps('v')">Flip V</button><button onclick="flipMaps('h')">Flip H</button><button onclick="flipMaps('r')">Rotate 90</button></div>
 <script>window.onerror=function(m,s,l){document.getElementById('log').textContent+="ERR: "+m+" @"+l+"\n";};</script>
 <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
 <script type="module">
@@ -8,6 +11,12 @@ import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 const log = m => document.getElementById('log').textContent += m + "\n";
 const API = location.origin;
+window.anvilMaps=[];
+window.flipMaps=function(w){ window.anvilMaps.forEach(tx=>{ tx.center.set(0.5,0.5);
+  if(w==='v') tx.flipY=!tx.flipY;
+  if(w==='h'){ tx.wrapS=THREE.RepeatWrapping; tx.repeat.x=-tx.repeat.x; }
+  if(w==='r') tx.rotation += Math.PI/2;
+  tx.needsUpdate=true; }); };
 const BG = 0x0b0a0c;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(BG);
@@ -19,7 +28,6 @@ ren.outputColorSpace = THREE.SRGBColorSpace;
 ren.setSize(innerWidth, innerHeight);
 ren.domElement.style.cssText='position:fixed;inset:0;z-index:1;display:block;';
 document.body.appendChild(ren.domElement);
-// lights — only affect the anvil (the one lit material); everything else is MeshBasic and ignores them
 scene.add(new THREE.AmbientLight(0xffffff, 0.75));
 const dl1=new THREE.DirectionalLight(0xfff0d8, 2.6); dl1.position.set(0.6,2.2,3.0); scene.add(dl1);
 const dl2=new THREE.DirectionalLight(0xff9040, 1.4); dl2.position.set(-2.0,1.2,0.6); scene.add(dl2);
@@ -76,6 +84,7 @@ function loadProp(url, place){
       const bc=tl.load(place.pbr.base); bc.colorSpace=THREE.SRGBColorSpace; bc.flipY=false;
       const rg=tl.load(place.pbr.rough); rg.flipY=false;
       const nm=tl.load(place.pbr.normal); nm.flipY=false;
+      if(place.uiFlip) window.anvilMaps.push(bc,rg,nm);
       makeMat=()=>new THREE.MeshStandardMaterial({map:bc, roughnessMap:rg, normalMap:nm, metalness:0.6, roughness:0.85, color:place.tint||0xffffff, side:THREE.DoubleSide});
     } else if(place.map){
       const pt=new THREE.TextureLoader().load(place.map); pt.colorSpace=THREE.SRGBColorSpace; pt.flipY=false;
@@ -100,7 +109,7 @@ function loadProp(url, place){
   }, undefined, e=>log('prop fail '+url.split('/').pop()));
 }
 loadProp(API+'/avatar-models/forge.fbx', {x:-1.7, z:-2.8, size:3.0, ry:0.6, color:0x4a3a30});
-loadProp(API+'/avatar-models/anvil.fbx', {x:0.72, z:1.0, size:0.95, ry:1.07, keep:['Anvil'], tint:0x8f8880, pbr:{
+loadProp(API+'/avatar-models/anvil.fbx', {x:0.72, z:1.0, size:0.95, ry:1.07, keep:['Anvil'], uiFlip:true, tint:0x8f8880, pbr:{
   base:API+'/avatar-models/tex_bs/Textures/Anvil/Anvil_BaseColor.png',
   rough:API+'/avatar-models/tex_bs/Textures/Anvil/Anvil_Roughness.png',
   normal:API+'/avatar-models/tex_bs/Textures/Anvil/Anvil_Normal.png'}});
