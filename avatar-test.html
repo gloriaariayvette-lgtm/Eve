@@ -1,9 +1,6 @@
 <!DOCTYPE html><html><head><meta charset="utf-8"><title>Vintos forge</title>
-<style>body{margin:0;background:#0b0a0c}#log{position:fixed;top:8px;left:8px;font:11px monospace;color:#c8a86a;z-index:9;white-space:pre}
-#ui{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:10;display:flex;gap:10px}
-#ui button{padding:12px 16px;font:14px monospace;background:#1a1712;color:#e8d9b0;border:1px solid #5a4a38;border-radius:8px}</style></head>
+<style>body{margin:0;background:#0b0a0c}#log{position:fixed;top:8px;left:8px;font:11px monospace;color:#c8a86a;z-index:9;white-space:pre}</style></head>
 <body><div id="log"></div>
-<div id="ui"><button onclick="flipMaps('v')">Flip V</button><button onclick="flipMaps('h')">Flip H</button><button onclick="flipMaps('r')">Rotate 90</button></div>
 <script>window.onerror=function(m,s,l){document.getElementById('log').textContent+="ERR: "+m+" @"+l+"\n";};</script>
 <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
 <script type="module">
@@ -11,12 +8,6 @@ import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 const log = m => document.getElementById('log').textContent += m + "\n";
 const API = location.origin;
-window.anvilMaps=[];
-window.flipMaps=function(w){ window.anvilMaps.forEach(tx=>{ tx.center.set(0.5,0.5);
-  if(w==='v') tx.flipY=!tx.flipY;
-  if(w==='h'){ tx.wrapS=THREE.RepeatWrapping; tx.repeat.x=-tx.repeat.x; }
-  if(w==='r') tx.rotation += Math.PI/2;
-  tx.needsUpdate=true; }); };
 const BG = 0x0b0a0c;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(BG);
@@ -34,6 +25,18 @@ const dl2=new THREE.DirectionalLight(0xff9040, 1.4); dl2.position.set(-2.0,1.2,0
 function radial(r,g,b,a){ const c=document.createElement('canvas'); c.width=c.height=64; const x=c.getContext('2d');
   const gr=x.createRadialGradient(32,32,1,32,32,32); gr.addColorStop(0,`rgba(${r},${g},${b},${a})`); gr.addColorStop(1,`rgba(${r},${g},${b},0)`);
   x.fillStyle=gr; x.fillRect(0,0,64,64); const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; return t; }
+function brickTex(){ const c=document.createElement('canvas'); c.width=c.height=256; const x=c.getContext('2d');
+  x.fillStyle='#2a1d17'; x.fillRect(0,0,256,256);
+  const bh=30,bw=58,mg=4;
+  for(let row=0,y=0;y<260;row++,y+=bh){ const off=(row%2)*(bw/2);
+    for(let bx=-bw;bx<256;bx+=bw){ const s=0.7+Math.random()*0.4;
+      x.fillStyle=`rgb(${Math.floor(96*s)},${Math.floor(55*s)},${Math.floor(42*s)})`;
+      x.fillRect(bx+off+mg/2,y+mg/2,bw-mg,bh-mg); } }
+  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(2,2); return t; }
+function metalTex(){ const c=document.createElement('canvas'); c.width=c.height=128; const x=c.getContext('2d');
+  x.fillStyle='#232019'; x.fillRect(0,0,128,128);
+  for(let i=0;i<2400;i++){ const v=18+Math.random()*34; x.fillStyle=`rgba(${v},${v-3},${v-7},0.4)`; x.fillRect(Math.random()*128,Math.random()*128,2,2); }
+  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; return t; }
 const floor=new THREE.Mesh(new THREE.CircleGeometry(26,64), new THREE.MeshBasicMaterial({color:0x08070a}));
 floor.rotation.x=-Math.PI/2; scene.add(floor);
 const sheenMat=new THREE.MeshBasicMaterial({map:radial(150,80,34,1.0), transparent:true, opacity:0.55, depthWrite:false, fog:false});
@@ -78,23 +81,26 @@ new FBXLoader().load(API+'/avatar-models/mixamo/character.fbx', f=>{
 });
 function loadProp(url, place){
   new FBXLoader().load(url, f=>{
-    let makeMat;
-    if(place.pbr){
+    let single=null, forgePick=null;
+    if(place.forgeSkin){
+      const brickMat=new THREE.MeshBasicMaterial({map:brickTex(), side:THREE.DoubleSide});
+      const metalMat=new THREE.MeshBasicMaterial({map:metalTex(), side:THREE.DoubleSide});
+      const goldMat=new THREE.MeshBasicMaterial({color:0x8f7228, side:THREE.DoubleSide});
+      forgePick=n=>{ n=(n||'').toLowerCase(); if(n.indexOf('stone')>=0||n.indexOf('brick')>=0)return brickMat; if(n.indexOf('gold')>=0)return goldMat; return metalMat; };
+    } else if(place.pbr){
       const tl=new THREE.TextureLoader();
-      const bc=tl.load(place.pbr.base); bc.colorSpace=THREE.SRGBColorSpace; bc.flipY=false;
-      const rg=tl.load(place.pbr.rough); rg.flipY=false;
-      const nm=tl.load(place.pbr.normal); nm.flipY=false;
-      if(place.uiFlip) window.anvilMaps.push(bc,rg,nm);
-      makeMat=()=>new THREE.MeshStandardMaterial({map:bc, roughnessMap:rg, normalMap:nm, metalness:0.6, roughness:0.85, color:place.tint||0xffffff, side:THREE.DoubleSide});
-    } else if(place.map){
-      const pt=new THREE.TextureLoader().load(place.map); pt.colorSpace=THREE.SRGBColorSpace; pt.flipY=false;
-      makeMat=()=>new THREE.MeshBasicMaterial({map:pt, color:place.tint||0xffffff, side:THREE.DoubleSide});
+      const bc=tl.load(place.pbr.base); bc.colorSpace=THREE.SRGBColorSpace; bc.flipY=true;
+      const rg=tl.load(place.pbr.rough); rg.flipY=true;
+      const nm=tl.load(place.pbr.normal); nm.flipY=true;
+      single=()=>new THREE.MeshStandardMaterial({map:bc, roughnessMap:rg, normalMap:nm, metalness:0.6, roughness:0.85, color:place.tint||0xffffff, side:THREE.DoubleSide});
     } else {
-      makeMat=()=>new THREE.MeshBasicMaterial({color:place.color, side:THREE.DoubleSide});
+      single=()=>new THREE.MeshBasicMaterial({color:place.color, side:THREE.DoubleSide});
     }
     f.traverse(o=>{ if(o.isMesh){
-      if(place.keep && place.keep.indexOf(o.name)<0){ o.visible=false; }
-      else { o.frustumCulled=false; o.material=makeMat(); } }});
+      if(place.keep && place.keep.indexOf(o.name)<0){ o.visible=false; return; }
+      o.frustumCulled=false;
+      if(forgePick){ o.material = Array.isArray(o.material)? o.material.map(m=>forgePick(m&&m.name)) : forgePick(o.material&&o.material.name); }
+      else { o.material=single(); } }});
     f.updateMatrixWorld(true);
     const vb=new THREE.Box3(); f.traverse(o=>{ if(o.isMesh&&o.visible) vb.expandByObject(o); });
     const z=new THREE.Vector3(); vb.getSize(z);
@@ -108,8 +114,8 @@ function loadProp(url, place){
     log(url.split('/').pop()+' placed');
   }, undefined, e=>log('prop fail '+url.split('/').pop()));
 }
-loadProp(API+'/avatar-models/forge.fbx', {x:-1.7, z:-2.8, size:3.0, ry:0.6, color:0x4a3a30});
-loadProp(API+'/avatar-models/anvil.fbx', {x:0.72, z:1.0, size:0.95, ry:1.07, keep:['Anvil'], uiFlip:true, tint:0x8f8880, pbr:{
+loadProp(API+'/avatar-models/forge.fbx', {x:-1.7, z:-2.8, size:3.0, ry:0.6, forgeSkin:true});
+loadProp(API+'/avatar-models/anvil.fbx', {x:0.72, z:1.0, size:0.95, ry:1.07, keep:['Anvil'], tint:0x8f8880, pbr:{
   base:API+'/avatar-models/tex_bs/Textures/Anvil/Anvil_BaseColor.png',
   rough:API+'/avatar-models/tex_bs/Textures/Anvil/Anvil_Roughness.png',
   normal:API+'/avatar-models/tex_bs/Textures/Anvil/Anvil_Normal.png'}});
