@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""living_trajectory.py — Spark System 1 (v3, production).
+"""living_trajectory.py — Spark System 1 (v3.2).
 
-One continuously-moving object: self_trajectory, gloria_trajectory, unresolved
-(curiosities/tensions/motifs w/ momentum), cache (System 2 fills). Runs every 15
-min via cron (the object moves even when Gloria is absent) and can be called
-in-process on each interaction. Read-only except living-trajectory.json. Fail-open.
+One continuously-moving object: self_trajectory (now incl. presence_trend from
+System 4), gloria_trajectory, unresolved, cache (System 2), and relationship
+(System 5). Runs every 15 min via cron. Read-only except living-trajectory.json.
 """
-import os, json
+import os, re, json
 from datetime import datetime, timezone
 
 MEMORY = os.path.expanduser("~/.vintos/workspace/memory")
 OUT    = os.path.join(MEMORY, "living-trajectory.json")
+
+NOISE = re.compile(r'^(lt_|\d{4}-\d\d|expand|refine|hold|pivot|resolve|want:)', re.I)
 
 def load(name, default):
     try:
@@ -19,8 +20,11 @@ def load(name, default):
     except Exception:
         return default
 
+def _clean(v):
+    v = v.strip()
+    return "" if (NOISE.match(v) or len(v) < 12) else v
+
 def deep_text(obj, *fields, limit=280):
-    """First matching text field; else join meaningful string values (noise-filtered)."""
     if isinstance(obj, str):
         return obj.strip()[:limit]
     if isinstance(obj, dict):
@@ -36,13 +40,6 @@ def deep_text(obj, *fields, limit=280):
         return deep_text(obj[-1], *fields, limit=limit)
     return ""
 
-import re
-NOISE = re.compile(r'^(lt_|\d{4}-\d\d|expand|refine|hold|pivot|resolve|want:)', re.I)
-
-def _clean(v):
-    v = v.strip()
-    return "" if (NOISE.match(v) or len(v) < 12) else v
-
 def num(d, *fields, default=0.5):
     if isinstance(d, dict):
         for k in fields:
@@ -55,7 +52,6 @@ TXT = ("origin", "thread", "text", "tension", "question", "summary", "title",
        "content", "description", "statement", "note", "label")
 
 def _flatten(seq):
-    """tensions is a list that may contain nested lists — flatten one level."""
     out = []
     for e in seq if isinstance(seq, list) else []:
         if isinstance(e, list):
@@ -77,11 +73,17 @@ def build():
     tensions       = _flatten(tension.get("tensions", []) if isinstance(tension, dict) else [])
     stack          = carryover.get("stack", []) if isinstance(carryover, dict) else []
 
-    # self_trajectory
     active = [w for w in wants if isinstance(w, dict)
               and not w.get("fulfilled") and not w.get("dismissed")]
     active.sort(key=lambda w: (w.get("intensity", 0), w.get("timestamp", "")), reverse=True)
     top = stack[-1] if stack else {}
+
+    # presence trend (System 4)
+    _pa = load("presence-audit.json", [])
+    _comps = [a.get("composite") for a in _pa[-8:]
+              if isinstance(a, dict) and isinstance(a.get("composite"), (int, float))]
+    presence_trend = round(sum(_comps) / len(_comps), 3) if _comps else None
+
     self_traj = {
         "declared": [deep_text(w, "want") for w in active[:3] if deep_text(w, "want")],
         "carryover_lean": {
@@ -90,10 +92,11 @@ def build():
             "weight": top.get("weight"),
         } if isinstance(top, dict) else {},
         "emotional_trajectory": emo.get("trajectory") if isinstance(emo, dict) else None,
+        "presence_trend": presence_trend,
+        "reactivity_flag": (presence_trend is not None and presence_trend < 0.45),
         "updated": datetime.now(timezone.utc).isoformat(),
     }
 
-    # gloria_trajectory — portrait, else recent observations
     portrait = gmodel.get("portrait") if isinstance(gmodel, dict) else ""
     predicted = portrait.strip()[:280] if isinstance(portrait, str) and portrait.strip() else ""
     if not predicted:
@@ -102,7 +105,6 @@ def build():
                                 for o in obs[-2:] if deep_text(o, "observation", "text", "note", "summary"))[:280]
     gloria_traj = {"predicted": predicted, "updated": datetime.now(timezone.utc).isoformat()}
 
-    # unresolved
     unresolved = []
     for src, tag, mfields in [
         (latent_threads, "latent-thread",     ("salience", "momentum", "pressure", "weight")),
@@ -114,25 +116,33 @@ def build():
             if not t:
                 continue
             unresolved.append({
-                "text": t,
-                "kind": tag,
+                "text": t, "kind": tag,
                 "momentum": num(e, *mfields, default=0.5),
                 "recurrence": int(num(e, "triage_count", "loss_count", "recurrence", "count", default=1)),
             })
     unresolved.sort(key=lambda x: (x["momentum"], x["recurrence"]), reverse=True)
 
-    # trimmed emotion snapshot (no gru_hidden_state)
     snap = {kk: vv for kk, vv in (emo.items() if isinstance(emo, dict) else [])
             if kk in ("baseline_emotion", "emotion_vector", "trajectory", "message_count", "last_updated")}
+
+    # relationship (System 5)
+    _rm = load("relationship-model.json", {})
+    relationship = {
+        "trajectory": _rm.get("trajectory", ""),
+        "current_state": _rm.get("current_state", {}),
+        "friction_points": (_rm.get("friction_points", []) or [])[:3],
+        "growth_edges": (_rm.get("growth_edges", []) or [])[:3],
+    } if isinstance(_rm, dict) else {}
 
     return {
         "self_trajectory": self_traj,
         "gloria_trajectory": gloria_traj,
         "unresolved": unresolved[:20],
         "cache": load("latent-cache.json", []),
+        "relationship": relationship,
         "emotion_snapshot": snap,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "version": "3.1",
+        "version": "3.2",
     }
 
 def build_and_write():
@@ -149,10 +159,8 @@ if __name__ == "__main__":
     print("self.declared:")
     for d in st["declared"]:
         print("   -", d[:100])
-    print("self.carryover_lean:", st["carryover_lean"])
-    print("gloria.predicted:", (traj["gloria_trajectory"]["predicted"] or "(none)")[:140])
-    print(f"unresolved: {len(traj['unresolved'])} items; top 5:")
-    for u in traj["unresolved"][:5]:
-        print(f"   [{u['kind']} m={u['momentum']:.2f} r={u['recurrence']}] {u['text'][:80]}")
-    print(f"cache (from latent prep): {len(traj['cache'])} arrivals")
+    print("self.presence_trend:", st["presence_trend"], "| reactivity_flag:", st["reactivity_flag"])
+    print("gloria.predicted:", (traj["gloria_trajectory"]["predicted"] or "(none)")[:120])
+    print("relationship.trajectory:", (traj["relationship"].get("trajectory") or "(none)")[:110])
+    print(f"unresolved: {len(traj['unresolved'])} | cache: {len(traj['cache'])} arrivals")
     print(f"wrote {OUT}")
