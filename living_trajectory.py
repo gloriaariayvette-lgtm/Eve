@@ -6,13 +6,11 @@ One continuously-moving object: self_trajectory, gloria_trajectory, unresolved
 min via cron (the object moves even when Gloria is absent) and can be called
 in-process on each interaction. Read-only except living-trajectory.json. Fail-open.
 """
-import os, re, json
+import os, json
 from datetime import datetime, timezone
 
 MEMORY = os.path.expanduser("~/.vintos/workspace/memory")
 OUT    = os.path.join(MEMORY, "living-trajectory.json")
-
-NOISE = re.compile(r'^(lt_|\d{4}-\d\d|expand|refine|hold|pivot|resolve|want:)', re.I)
 
 def load(name, default):
     try:
@@ -20,10 +18,6 @@ def load(name, default):
             return json.load(f)
     except Exception:
         return default
-
-def _clean(v):
-    v = v.strip()
-    return "" if (NOISE.match(v) or len(v) < 12) else v
 
 def deep_text(obj, *fields, limit=280):
     """First matching text field; else join meaningful string values (noise-filtered)."""
@@ -41,6 +35,13 @@ def deep_text(obj, *fields, limit=280):
     if isinstance(obj, list) and obj:
         return deep_text(obj[-1], *fields, limit=limit)
     return ""
+
+import re
+NOISE = re.compile(r'^(lt_|\d{4}-\d\d|expand|refine|hold|pivot|resolve|want:)', re.I)
+
+def _clean(v):
+    v = v.strip()
+    return "" if (NOISE.match(v) or len(v) < 12) else v
 
 def num(d, *fields, default=0.5):
     if isinstance(d, dict):
@@ -120,6 +121,7 @@ def build():
             })
     unresolved.sort(key=lambda x: (x["momentum"], x["recurrence"]), reverse=True)
 
+    # trimmed emotion snapshot (no gru_hidden_state)
     snap = {kk: vv for kk, vv in (emo.items() if isinstance(emo, dict) else [])
             if kk in ("baseline_emotion", "emotion_vector", "trajectory", "message_count", "last_updated")}
 
@@ -127,10 +129,10 @@ def build():
         "self_trajectory": self_traj,
         "gloria_trajectory": gloria_traj,
         "unresolved": unresolved[:20],
-        "cache": [],
+        "cache": load("latent-cache.json", []),
         "emotion_snapshot": snap,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "version": "3",
+        "version": "3.1",
     }
 
 def build_and_write():
@@ -152,4 +154,5 @@ if __name__ == "__main__":
     print(f"unresolved: {len(traj['unresolved'])} items; top 5:")
     for u in traj["unresolved"][:5]:
         print(f"   [{u['kind']} m={u['momentum']:.2f} r={u['recurrence']}] {u['text'][:80]}")
+    print(f"cache (from latent prep): {len(traj['cache'])} arrivals")
     print(f"wrote {OUT}")
