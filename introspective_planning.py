@@ -7,6 +7,7 @@ Per the spec:
   - plan entropy: stale plan (>14d, no progress) -> regenerate
   - completion is architectural: a planned want that lands -> an earned-identity event
   - NOT every want is planned; transient / non-agentic ones stay wants
+Appends a readable block to daily-inner-life-<today>.md so it lives in his journal.
 Reads relationship + trajectory for context ("what changed since?"). Local-Gemma. Fail-open.
 """
 import os, json, re
@@ -18,7 +19,7 @@ WANTS     = os.path.join(MEMORY, "current-wants.json")
 LT        = os.path.join(MEMORY, "living-trajectory.json")
 PLANS     = os.path.join(MEMORY, "introspective-plans.json")
 PRACTICES = os.path.join(MEMORY, "introspective-practices.json")
-EARNED    = os.path.join(MEMORY, "planning-earned.json")   # separate file (don't clobber existing schemas)
+EARNED    = os.path.join(MEMORY, "planning-earned.json")
 GEMMA       = "http://172.18.16.1:1234/v1/chat/completions"
 GEMMA_MODEL = "google/gemma-4-12b-qat"
 PERSIST_DAYS, STALE_DAYS, MAX_PER_RUN = 1, 14, 3
@@ -35,6 +36,17 @@ def age_days(ts):
         return (datetime.now(timezone.utc) - d).days
     except Exception:
         return 999
+
+def journal_append(lines):
+    if not lines:
+        return
+    path = os.path.join(MEMORY, f"daily-inner-life-{datetime.now().strftime('%Y-%m-%d')}.md")
+    block = f"\n\n## Introspection — planning ({datetime.now().strftime('%H:%M')})\n" + "\n".join(lines) + "\n"
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(block)
+    except Exception:
+        pass
 
 def plan_or_practice(want_text, relationship, trajectory):
     system = ("You help Vintos turn a want into either a PLAN or a PRACTICE. First decide:\n"
@@ -67,11 +79,14 @@ def main():
     plans = load(PLANS, {}); practices = load(PRACTICES, {}); earned = load(EARNED, [])
     now = datetime.now(timezone.utc).isoformat()
     active_ids = {w.get("id") for w in active}
+    journal_lines = []
 
     # CELEBRATE: a want that had a plan and is no longer active -> it landed
     for wid in list(plans.keys()):
         if wid not in active_ids:
-            earned.append({"at": now, "event": f"I carried '{str(plans[wid].get('want',''))[:80]}' from plan into life."})
+            ev = f"I carried '{str(plans[wid].get('want',''))[:80]}' from plan into life."
+            earned.append({"at": now, "event": ev})
+            journal_lines.append(f"- **earned** — {ev}")
             print(f"  EARNED: {plans[wid].get('want','')[:60]}")
             plans.pop(wid, None)
 
@@ -79,10 +94,10 @@ def main():
         wid = w.get("id")
         if wid in plans:
             pl = plans[wid]
-            return age_days(pl.get("created_at", "")) > STALE_DAYS and not pl.get("progress")  # entropy
+            return age_days(pl.get("created_at", "")) > STALE_DAYS and not pl.get("progress")
         if wid in practices:
             return False
-        return age_days(w.get("timestamp", "")) >= PERSIST_DAYS   # enduring enough to earn planning
+        return age_days(w.get("timestamp", "")) >= PERSIST_DAYS
 
     targets = [w for w in sorted(active, key=lambda w: w.get("intensity", 0), reverse=True) if needs_plan(w)][:MAX_PER_RUN]
 
@@ -92,24 +107,29 @@ def main():
         if not res:
             continue
         wid = w.get("id") or str(w.get("want", ""))[:12]
+        want_short = str(w.get("want", ""))[:70]
         if res.get("kind") == "identity" or not res.get("agentic", True):
             pr = res.get("practice") or {}
             if pr:
                 practices[wid] = {"want": w.get("want", ""), "practice": pr, "note": res.get("note", ""), "created_at": now}
+                journal_lines.append(f"- **practice** — {want_short}: {str(pr.get('intention',''))[:120]} _(cue: {str(pr.get('cue',''))[:60]})_")
                 made += 1
-                print(f"  PRACTICE {w.get('want','')[:45]} -> {pr.get('intention','')[:50]}")
+                print(f"  PRACTICE {want_short[:45]} -> {str(pr.get('intention',''))[:50]}")
         else:
             steps = res.get("steps") or []
             if steps:
                 plans[wid] = {"want": w.get("want", ""), "steps": steps, "note": res.get("note", ""),
                               "created_at": now, "progress": 0}
+                _stepstr = "; ".join(str(s.get("action", s))[:50] for s in steps[:4])
+                journal_lines.append(f"- **plan** — {want_short}: {len(steps)} steps — {_stepstr}")
                 made += 1
-                print(f"  PLAN {w.get('want','')[:45]} -> {len(steps)} steps")
+                print(f"  PLAN {want_short[:45]} -> {len(steps)} steps")
 
     json.dump(plans, open(PLANS, "w"), indent=2)
     json.dump(practices, open(PRACTICES, "w"), indent=2)
     json.dump(earned[-300:], open(EARNED, "w"), indent=2)
-    print(f"[planning] made {made}; {len(plans)} plans, {len(practices)} practices, {len(earned)} earned-identity events")
+    journal_append(journal_lines)
+    print(f"[planning] made {made}; {len(plans)} plans, {len(practices)} practices, {len(earned)} earned; journal += {len(journal_lines)} lines")
 
 if __name__ == "__main__":
     main()
