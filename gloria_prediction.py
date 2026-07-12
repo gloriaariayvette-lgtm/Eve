@@ -55,9 +55,21 @@ def main():
         "novelty": round(float(d.get("novelty", 0.5) or 0.5), 3),
         "predicted_at": now,
     }
+
+    # JEPA fusion: if the frozen-encoder predictor has run, prefer its GROUNDED
+    # uncertainty (embedding-based) over the LLM's guessed confidence/novelty.
+    # Keeps the LLM's readable 'predicted' sentence; grounds the numbers. Drop-in.
+    jp = load(os.path.join(MEMORY, "jepa-prediction.json"), {})
+    if jp.get("source") == "jepa":
+        out["confidence"] = round(float(jp.get("confidence", out["confidence"])), 3)
+        out["novelty"]    = round(float(jp.get("novelty", out["novelty"])), 3)
+        out["grounded_by"] = "jepa"
+        out["jepa_nearest"] = str(jp.get("gloria_forecast_nearest", ""))[:160]
+
     json.dump(out, open(OUT, "w"), indent=2)
 
     log = load(HIST, [])
+    # record the grade of what we predicted last time, then this new prediction
     log.append({"at": now, "graded_previous": round(grade, 3),
                 "predicted": out["predicted"], "confidence": out["confidence"], "novelty": out["novelty"]})
     json.dump(log[-300:], open(HIST, "w"), indent=2)
