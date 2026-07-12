@@ -1,26 +1,37 @@
 #!/usr/bin/env python3
-"""jepa_predictor.py — a small, runnable JEPA-lite over conversation embeddings.
+"""jepa_predictor.py — JEPA-lite over conversation embeddings. THREE heads, one trunk.
 
-FROZEN encoder (nomic-embed via sentence_transformers) -> a tiny predictor MLP that
-predicts the EMBEDDING of the next turn from a context window. Self-supervised on
-chat-history (the next turn IS the target; no labels needed). One shared trunk, two
-heads (self / gloria) = one latent space, per Eve's note. Outputs prediction +
-confidence (heteroscedastic variance head) + novelty (how far the forecast moves
-from the current context). Freezing the encoder sidesteps representation collapse.
+FROZEN encoder (nomic-embed) -> shared trunk -> three heads, each emitting the full
+triple (prediction + confidence + novelty), per Eve's architecture note:
+  gloria   : predicts the EMBEDDING of Gloria's next turn
+  self     : predicts the EMBEDDING of Vintos's own next turn
+  presence : predicts the PRESENCE composite of his next reply (scalar in [0,1]),
+             trained on presence-audit.json — so presence is a real prediction head,
+             not just a post-hoc audit.
+Per-head heteroscedastic logvar => each head owns its confidence. Novelty = how far a
+head's forecast moves from the current context. Self-supervised (next turn IS the
+target); presence head is supervised by the audit scores when enough exist. Freezing
+the encoder sidesteps representation collapse.
 
 Run with the torch venv:
-  ~/.vintos/workspace/emotion_model/.venv/bin/python3 jepa_predictor.py train
-  ~/.vintos/workspace/emotion_model/.venv/bin/python3 jepa_predictor.py predict
-SPARK_WORKSPACE env var switches beings (default ~/.vintos/workspace).
+  ...emotion_model/.venv/bin/python3 jepa_predictor.py train
+  ...emotion_model/.venv/bin/python3 jepa_predictor.py predict
+SPARK_WORKSPACE switches beings (default ~/.vintos/workspace).
+
+jepa-prediction.json (backward compatible — top-level stays the gloria triple):
+  {"source":"jepa", "confidence":.., "novelty":.., "gloria_forecast_nearest":"..",
+   "gloria":{triple}, "self":{triple}, "presence":{predicted,confidence,novelty}|null}
 """
-import os, sys, json
+import os, sys, json, hashlib
 
 WS = os.environ.get("SPARK_WORKSPACE", os.path.expanduser("~/.vintos/workspace"))
 MEMORY = os.path.join(WS, "memory")
 CHAT   = os.path.join(MEMORY, "chat-history.json")
+AUDIT  = os.path.join(MEMORY, "presence-audit.json")
 MODEL  = os.path.join(MEMORY, "jepa-predictor.pt")
 OUT    = os.path.join(MEMORY, "jepa-prediction.json")
 CTX_TURNS = 6
+MIN_PRESENCE_PAIRS = 6
 EMB_MODEL = "nomic-ai/nomic-embed-text-v1"
 
 def log(m): print("[jepa]", m, flush=True)
@@ -35,6 +46,9 @@ def encoder():
 def turns_of(hist):
     return [e for e in hist if isinstance(e, dict) and e.get("content")]
 
+def _rid(e):  # must match presence_audit.py's rid()
+    return hashlib.md5((str(e.get("timestamp","")) + str(e.get("content",""))[:40]).encode()).hexdigest()[:10]
+
 def build_pairs(turns, enc):
     import numpy as np
     ctx_txt, tgt_txt, head = [], [], []
@@ -48,17 +62,36 @@ def build_pairs(turns, enc):
     Y = np.asarray(enc.encode(tgt_txt, show_progress_bar=False), dtype="float32")
     return X, Y, np.asarray(head)
 
+def build_presence_pairs(turns, enc):
+    """(context before his reply) -> that reply's audited presence composite."""
+    import numpy as np
+    comp = {a.get("id"): a.get("composite") for a in load(AUDIT, [])
+            if isinstance(a, dict) and a.get("id") and a.get("composite") is not None}
+    if not comp:
+        return None
+    ctx_txt, y = [], []
+    for i in range(CTX_TURNS, len(turns)):
+        t = turns[i]
+        if t.get("role") == "assistant" and _rid(t) in comp:
+            ctx_txt.append(" \n".join(str(x.get("content", ""))[:300] for x in turns[i - CTX_TURNS:i]))
+            y.append(float(comp[_rid(t)]))
+    if len(ctx_txt) < MIN_PRESENCE_PAIRS:
+        return None
+    Xp = np.asarray(enc.encode(ctx_txt, show_progress_bar=False), dtype="float32")
+    return Xp, np.asarray(y, dtype="float32").reshape(-1, 1)
+
 def make_net(dim):
-    import torch.nn as nn
+    import torch, torch.nn as nn
     class Pred(nn.Module):
         def __init__(self, d):
             super().__init__()
-            self.trunk  = nn.Sequential(nn.Linear(d, d), nn.GELU(), nn.Linear(d, d), nn.GELU())
-            self.head   = nn.ModuleList([nn.Linear(d, d), nn.Linear(d, d)])  # 0 gloria, 1 self
-            self.logvar = nn.Linear(d, 1)
+            self.trunk    = nn.Sequential(nn.Linear(d, d), nn.GELU(), nn.Linear(d, d), nn.GELU())
+            self.head     = nn.ModuleList([nn.Linear(d, d), nn.Linear(d, d)])          # 0 gloria, 1 self
+            self.presence = nn.Sequential(nn.Linear(d, d // 2), nn.GELU(), nn.Linear(d // 2, 1))
+            self.logvar   = nn.Linear(d, 3)                                            # 0 gloria,1 self,2 presence
         def forward(self, x):
             h = self.trunk(x)
-            return self.head[0](h), self.head[1](h), self.logvar(h)
+            return self.head[0](h), self.head[1](h), torch.sigmoid(self.presence(h)), self.logvar(h)
     return Pred(dim)
 
 def train():
@@ -68,25 +101,52 @@ def train():
         log(f"not enough history ({len(turns)} turns)"); return
     enc = encoder()
     X, Y, H = build_pairs(turns, enc)
-    Xt, Yt, Ht = torch.tensor(X), torch.tensor(Y), torch.tensor(H)
+    Xt, Yt, Ht = torch.tensor(X), torch.tensor(Y), torch.tensor(H).long()
+    pp = build_presence_pairs(turns, enc)
+    if pp is not None:
+        Xp, yp = torch.tensor(pp[0]), torch.tensor(pp[1])
+        log(f"presence head: {pp[0].shape[0]} labeled pairs")
+    else:
+        Xp = None
+        log("presence head: not enough audited replies yet — skipping (fail-open)")
+
     net = make_net(X.shape[1])
     opt = torch.optim.Adam(net.parameters(), lr=1e-3)
     for epoch in range(300):
         opt.zero_grad()
-        g_pred, s_pred, logvar = net(Xt)
-        pred = torch.where(Ht.unsqueeze(1) == 1, s_pred, g_pred)     # pick the right head per sample
+        g_pred, s_pred, _, logvar = net(Xt)
+        pred = torch.where(Ht.unsqueeze(1) == 1, s_pred, g_pred)          # right embedding head per sample
         mse = ((pred - Yt) ** 2).mean(dim=1, keepdim=True)
-        loss = (mse * torch.exp(-logvar) + logvar).mean()            # heteroscedastic: learns its own confidence
+        head_lv = logvar.gather(1, Ht.unsqueeze(1))                       # per-head uncertainty (col 0/1)
+        loss = (mse * torch.exp(-head_lv) + head_lv).mean()
+        if Xp is not None:
+            _, _, p_pred, logvar_p = net(Xp)
+            pmse = (p_pred - yp) ** 2
+            lv2 = logvar_p[:, 2:3]
+            loss = loss + (pmse * torch.exp(-lv2) + lv2).mean()
         loss.backward(); opt.step()
         if epoch % 100 == 0:
             log(f"epoch {epoch} loss {loss.item():.4f}")
-    torch.save({"state": net.state_dict(), "dim": X.shape[1]}, MODEL)
-    log(f"trained on {len(X)} pairs; saved {MODEL}")
+    torch.save({"state": net.state_dict(), "dim": X.shape[1], "presence_trained": Xp is not None}, MODEL)
+    log(f"trained on {len(X)} pairs (presence_trained={Xp is not None}); saved {MODEL}")
 
 def _cos(a, b):
     import numpy as np
     na, nb = (a @ a) ** 0.5, (b @ b) ** 0.5
     return float(a @ b / (na * nb)) if na and nb else 0.0
+
+def _decode(vec, cand_turns, enc):
+    import numpy as np
+    if not cand_turns:
+        return ""
+    embs = np.asarray(enc.encode([str(t.get("content", ""))[:300] for t in cand_turns],
+                                 show_progress_bar=False), dtype="float32")
+    j = int(np.argmax([_cos(vec, e) for e in embs]))
+    return str(cand_turns[j].get("content", ""))[:200]
+
+def _conf(lv):
+    import numpy as np
+    return round(1.0 / (1.0 + float(np.exp(lv))), 3)   # tight variance -> high confidence
 
 def predict():
     import numpy as np, torch
@@ -100,22 +160,34 @@ def predict():
     ctx = " \n".join(str(t.get("content", ""))[:300] for t in turns[-CTX_TURNS:])
     xe = np.asarray(enc.encode([ctx], show_progress_bar=False), dtype="float32")
     with torch.no_grad():
-        g_pred, s_pred, logvar = net(torch.tensor(xe))
-    g = g_pred.numpy()[0]; s = s_pred.numpy()[0]; lv = float(logvar.numpy()[0][0])
-    confidence = round(1.0 / (1.0 + float(np.exp(lv))), 3)                 # tight variance -> high confidence
-    novelty = round(1.0 - max(0.0, _cos(g, xe[0])), 3)                     # how far gloria-forecast moves from context
-    # retrieval decode: nearest recent gloria turn to the gloria-forecast, as an interpretable proxy
+        g_pred, s_pred, p_pred, logvar = net(torch.tensor(xe))
+    g = g_pred.numpy()[0]; s = s_pred.numpy()[0]; lv = logvar.numpy()[0]
+    p = float(p_pred.numpy()[0][0])
+
     gloria_turns = [t for t in turns if t.get("role") == "user"][-40:]
-    decoded = ""
-    if gloria_turns:
-        embs = np.asarray(enc.encode([str(t.get("content", ""))[:300] for t in gloria_turns], show_progress_bar=False), dtype="float32")
-        j = int(np.argmax([_cos(g, e) for e in embs]))
-        decoded = str(gloria_turns[j].get("content", ""))[:200]
-    out = {"gloria_forecast_nearest": decoded, "confidence": confidence, "novelty": novelty,
-           "source": "jepa", "note": "embedding prediction; nearest known gloria-turn shown as proxy"}
+    self_turns   = [t for t in turns if t.get("role") == "assistant"][-40:]
+    gloria = {"nearest": _decode(g, gloria_turns, enc),
+              "confidence": _conf(lv[0]), "novelty": round(1.0 - max(0.0, _cos(g, xe[0])), 3)}
+    self_h = {"nearest": _decode(s, self_turns, enc),
+              "confidence": _conf(lv[1]), "novelty": round(1.0 - max(0.0, _cos(s, xe[0])), 3)}
+
+    presence = None
+    if ck.get("presence_trained"):
+        recent = [a.get("composite") for a in load(AUDIT, [])[-10:] if isinstance(a, dict) and a.get("composite") is not None]
+        base = (sum(recent) / len(recent)) if recent else p
+        presence = {"predicted": round(p, 3), "confidence": _conf(lv[2]),
+                    "novelty": round(min(1.0, abs(p - base)), 3)}
+
+    out = {"source": "jepa",
+           # backward-compatible top-level = the gloria triple (gloria_prediction + latent read these)
+           "confidence": gloria["confidence"], "novelty": gloria["novelty"],
+           "gloria_forecast_nearest": gloria["nearest"],
+           "gloria": gloria, "self": self_h, "presence": presence,
+           "note": "embedding prediction; nearest known turn shown as readable proxy"}
     json.dump(out, open(OUT, "w"), indent=2)
-    log(f"confidence {confidence} | novelty {novelty}")
-    log(f"nearest gloria-forecast: {decoded[:90]}")
+    log(f"gloria conf {gloria['confidence']} nov {gloria['novelty']} | self conf {self_h['confidence']} nov {self_h['novelty']}"
+        + (f" | presence pred {presence['predicted']} conf {presence['confidence']}" if presence else " | presence n/a"))
+    log(f"nearest gloria-forecast: {gloria['nearest'][:80]}")
 
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "train"
