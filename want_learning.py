@@ -15,7 +15,8 @@ new wants survives; dead ones fade — a freshly-born item is spared eviction it
 
 Also PRECOMPUTES the semantic match to his CURRENT tension (nomic — the same frozen
 encoder JEPA uses) -> learned-active.json / regret-active.json, so the want-gen hot path
-stays torch-free. Runs on the torch venv. SPARK_WORKSPACE switches beings. Fail-open.
+stays torch-free. And carries the standing learnings + regrets into today's inner-life
+journal as a managed block. Runs on the torch venv. SPARK_WORKSPACE switches beings. Fail-open.
 """
 import os, sys, json, re, hashlib
 from datetime import datetime, timezone
@@ -115,6 +116,29 @@ def distill(want, enc):
             "remained": str(d.get("remained", ""))[:200],
             "regret": bool(d.get("regret")), "regret_note": str(d.get("regret_note", "")).strip()}
 
+def carry_to_journal(learned_store, regret_store):
+    """Carry the standing learnings + regrets into today's inner-life journal as a
+    managed, idempotent block — no ritual edits needed. Replaces itself in place."""
+    from datetime import date as _date
+    top_l = sorted(learned_store, key=lambda x: x.get("hits", 0), reverse=True)[:3]
+    top_r = sorted(regret_store, key=lambda x: x.get("hits", 0), reverse=True)[:2]
+    if not top_l and not top_r:
+        return
+    lines = ["<!-- LEARNED:start -->", "## What is becoming true"]
+    lines += ["- " + str(x.get("learned", "")) for x in top_l]
+    if top_r:
+        lines += ["", "_Ways I would not reach again:_"] + ["- " + str(x.get("regret", "")) for x in top_r]
+    lines.append("<!-- LEARNED:end -->")
+    block = "\n".join(lines)
+    p = os.path.join(MEMORY, "daily-inner-life-" + _date.today().isoformat() + ".md")
+    old = read(p)
+    if "<!-- LEARNED:start -->" in old:
+        new = re.sub(r"<!-- LEARNED:start -->.*?<!-- LEARNED:end -->", lambda _m: block, old, flags=re.S)
+    else:
+        new = (old + ("\n\n" if old else "") + block + "\n")
+    open(p, "w").write(new)
+    log(f"carried into journal: {os.path.basename(p)}")
+
 def _evict(store, fresh_ids):
     """Cap the store; evict the lowest-hits item, but never one added this run."""
     while len(store) > CAP:
@@ -182,6 +206,7 @@ def main():
     json.dump(ra or {}, open(REGRET_ACTIVE, "w"), indent=2)
     state["processed"] = list(processed)[-400:]
     json.dump(state, open(STATE, "w"), indent=2)
+    carry_to_journal(learned_store, regret_store)
     log(f"learned {len(learned_store)} | regret {len(regret_store)} | "
         f"active learned={'yes' if la else 'no'} regret={'yes' if ra else 'no'}")
 
