@@ -22,7 +22,7 @@ SCRIPTS = os.path.join(WS, "scripts")
 CHAT = os.path.join(MEMORY, "chat-history.json")
 OUT  = os.path.join(MEMORY, "cause-distribution.json")
 WINDOW_MIN = 20          # the engine's own rule: a cause must be within 20 min of the spike
-LOOKBACK_H = 48          # only score recent spikes
+LOOKBACK_H = 168         # 7 days — the engine's own horizon (trajectory is sparsely sampled)
 MAX_CANDS = 8
 
 def log(m): print("[cause-head]", m, flush=True)
