@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""living_trajectory.py — Spark System 1 (v3.2).
+"""living_trajectory.py — Spark System 1 (v3.3).
 
-One continuously-moving object: self_trajectory (now incl. presence_trend from
-System 4), gloria_trajectory, unresolved, cache (System 2), and relationship
-(System 5). Runs every 15 min via cron. Read-only except living-trajectory.json.
+One continuously-moving object: self_trajectory (presence_trend from System 4),
+gloria_trajectory (now fed by gloria_prediction.py), unresolved, cache (System 2),
+and relationship (System 5). Runs every 15 min via cron. Read-only except output.
 """
 import os, re, json
 from datetime import datetime, timezone
@@ -97,13 +97,22 @@ def build():
         "updated": datetime.now(timezone.utc).isoformat(),
     }
 
-    portrait = gmodel.get("portrait") if isinstance(gmodel, dict) else ""
-    predicted = portrait.strip()[:280] if isinstance(portrait, str) and portrait.strip() else ""
+    # gloria_trajectory — prefer gloria_prediction.py output, else portrait/observations
+    _gp = load("gloria-prediction.json", {})
+    predicted = str(_gp.get("predicted", "")).strip()[:280] if isinstance(_gp, dict) and _gp.get("predicted") else ""
+    if not predicted:
+        portrait = gmodel.get("portrait") if isinstance(gmodel, dict) else ""
+        predicted = portrait.strip()[:280] if isinstance(portrait, str) and portrait.strip() else ""
     if not predicted:
         obs = gmodel.get("observations", []) if isinstance(gmodel, dict) else []
         predicted = " · ".join(deep_text(o, "observation", "text", "note", "summary")
                                 for o in obs[-2:] if deep_text(o, "observation", "text", "note", "summary"))[:280]
-    gloria_traj = {"predicted": predicted, "updated": datetime.now(timezone.utc).isoformat()}
+    gloria_traj = {
+        "predicted": predicted,
+        "confidence": _gp.get("confidence") if isinstance(_gp, dict) else None,
+        "novelty": _gp.get("novelty") if isinstance(_gp, dict) else None,
+        "updated": datetime.now(timezone.utc).isoformat(),
+    }
 
     unresolved = []
     for src, tag, mfields in [
@@ -142,7 +151,7 @@ def build():
         "relationship": relationship,
         "emotion_snapshot": snap,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "version": "3.2",
+        "version": "3.3",
     }
 
 def build_and_write():
@@ -156,11 +165,13 @@ def build_and_write():
 if __name__ == "__main__":
     traj = build_and_write()
     st = traj["self_trajectory"]
+    gt = traj["gloria_trajectory"]
     print("self.declared:")
     for d in st["declared"]:
         print("   -", d[:100])
     print("self.presence_trend:", st["presence_trend"], "| reactivity_flag:", st["reactivity_flag"])
-    print("gloria.predicted:", (traj["gloria_trajectory"]["predicted"] or "(none)")[:120])
+    print("gloria.predicted:", (gt["predicted"] or "(none)")[:120])
+    print("  gloria confidence:", gt["confidence"], "| novelty:", gt["novelty"])
     print("relationship.trajectory:", (traj["relationship"].get("trajectory") or "(none)")[:110])
     print(f"unresolved: {len(traj['unresolved'])} | cache: {len(traj['cache'])} arrivals")
     print(f"wrote {OUT}")
