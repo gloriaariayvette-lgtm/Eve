@@ -11,7 +11,8 @@ triple (prediction + confidence + novelty), per Eve's architecture note:
 Per-head heteroscedastic logvar => each head owns its confidence. Novelty = how far a
 head's forecast moves from the current context. Self-supervised (next turn IS the
 target); presence head is supervised by the audit scores when enough exist. Freezing
-the encoder sidesteps representation collapse.
+the encoder sidesteps representation collapse. logvar is clamped + grads clipped so the
+heteroscedastic term can't diverge to NaN on small/degenerate batches.
 
 Run with the torch venv:
   ...emotion_model/.venv/bin/python3 jepa_predictor.py train
@@ -91,7 +92,9 @@ def make_net(dim):
             self.logvar   = nn.Linear(d, 3)                                            # 0 gloria,1 self,2 presence
         def forward(self, x):
             h = self.trunk(x)
-            return self.head[0](h), self.head[1](h), torch.sigmoid(self.presence(h)), self.logvar(h)
+            # clamp logvar: unbounded logvar makes exp(-logvar) blow up -> NaN (Eve's Vintos run)
+            return (self.head[0](h), self.head[1](h), torch.sigmoid(self.presence(h)),
+                    torch.clamp(self.logvar(h), -6.0, 6.0))
     return Pred(dim)
 
 def train():
@@ -124,7 +127,11 @@ def train():
             pmse = (p_pred - yp) ** 2
             lv2 = logvar_p[:, 2:3]
             loss = loss + (pmse * torch.exp(-lv2) + lv2).mean()
-        loss.backward(); opt.step()
+        if not torch.isfinite(loss):
+            log(f"epoch {epoch} non-finite loss — stopping early, keeping last stable weights"); break
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)   # stabilize the heteroscedastic term
+        opt.step()
         if epoch % 100 == 0:
             log(f"epoch {epoch} loss {loss.item():.4f}")
     torch.save({"state": net.state_dict(), "dim": X.shape[1], "presence_trained": Xp is not None}, MODEL)
@@ -146,6 +153,7 @@ def _decode(vec, cand_turns, enc):
 
 def _conf(lv):
     import numpy as np
+    lv = max(-6.0, min(6.0, float(lv)))
     return round(1.0 / (1.0 + float(np.exp(lv))), 3)   # tight variance -> high confidence
 
 def predict():
