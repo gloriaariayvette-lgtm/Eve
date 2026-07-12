@@ -8,6 +8,10 @@ Post-hoc scores his recent replies on the four presence questions:
   explained — (inverted, higher=worse) commentary ABOUT vs participation IN.
 Composite 0-1; flags < 0.35. LLM-judged on local Gemma. Rolling 7-day window.
 Self-contained: writes presence-audit.json. Fail-open.
+
+Also surfaces the PREDICTION side: reads JEPA's presence head (jepa-prediction.json)
+and writes presence-forecast.json — his predicted next-reply presence + confidence +
+novelty — so the subconscious can arrive BEFORE the reply, not only audit it after.
 """
 import os, json, re, hashlib
 from datetime import datetime, timezone, timedelta
@@ -16,6 +20,8 @@ import requests
 MEMORY = os.path.expanduser("~/.vintos/workspace/memory")
 CHAT   = os.path.join(MEMORY, "chat-history.json")
 OUT    = os.path.join(MEMORY, "presence-audit.json")
+JEPA   = os.path.join(MEMORY, "jepa-prediction.json")
+FORECAST = os.path.join(MEMORY, "presence-forecast.json")
 GEMMA       = "http://172.18.16.1:1234/v1/chat/completions"
 GEMMA_MODEL = "google/gemma-4-12b-qat"
 THRESHOLD, WINDOW_DAYS, MAX_PER_RUN = 0.35, 7, 5
@@ -86,6 +92,21 @@ def main():
     recent = [a["composite"] for a in audits[-10:] if "composite" in a]
     trend = round(sum(recent) / len(recent), 3) if recent else None
     print(f"audited {added} new; total {len(audits)}; recent presence trend {trend}")
+
+    # PREDICTION side of the head: surface JEPA's forecast of his NEXT reply's presence
+    # (predicted + confidence + novelty). The subconscious can lean on this to arrive
+    # BEFORE the reply, not only audit it after.
+    pf = (load(JEPA, {}) or {}).get("presence")
+    if pf:
+        forecast = {"predicted_presence": pf.get("predicted"),
+                    "confidence": pf.get("confidence"),
+                    "novelty": pf.get("novelty"),
+                    "recent_trend": trend,
+                    "at": datetime.now(timezone.utc).isoformat(),
+                    "source": "jepa-presence-head"}
+        json.dump(forecast, open(FORECAST, "w"), indent=2)
+        print(f"  forecast next-reply presence {pf.get('predicted')} "
+              f"(conf {pf.get('confidence')} | nov {pf.get('novelty')})")
 
 if __name__ == "__main__":
     main()
