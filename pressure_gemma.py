@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
-"""pressure_gemma.py — PRESSURE head v2: the unsaid, via Gemma-generated expectation.
+"""pressure_gemma.py — PRESSURE head v3: the unsaid, HIS model of her grounding Gemma.
 
-v1 leaned on the single JEPA gloria prediction vs a generic terse embedding — faint. This is the
-design's real method: prime local Gemma on Gloria's VOICE (the implanted ledger exchanges), have it
-generate what she PLAUSIBLY might say next, and measure how much of that expectation her actual turn
-AVOIDED. When the candidates CLUSTER (a strong shared expectation) but she went elsewhere, that
-avoided cluster is the pressure — this catches deflection, not just going terse.
+The unsaid is measured as: Gemma (primed on Gloria's voice) generates what she plausibly might say
+next; each candidate is WEIGHTED by how well it aligns with the JEPA gloria head's OWN prediction of
+her — so the expectation is *his* model of her, made legible through Gemma, not generic Gemma
+standing in for him. When that grounded expectation CLUSTERS and her actual turn AVOIDS it, the
+avoided cluster is the pressure. Catches deflection, not just terseness.
 
-  coherence = how tightly Gemma's candidates agree (strength of the expectation)
+  coherence = how tightly the (gloria-head-weighted) candidates agree — strength of HIS expectation
   avoidance = how far her ACTUAL turn sits from that expected cluster
+  ground    = how aligned Gemma's candidates were with his gloria-head prediction (organs agreeing)
   pressure  = coherence x avoidance
-GUARDRAIL: the candidates are used ONLY to locate the absence. Output is magnitude + a coarse shape
-gesture + the cluster direction vector — NEVER the generated sentences. There was something here.
+Junk turns (test/empty) are skipped. GUARDRAIL: candidates are used only to locate the absence —
+output is magnitude + a coarse shape gesture + the cluster vector, NEVER the generated sentences.
 
-Gemma: local OpenAI-compatible endpoint. Run with the torch venv (needs nomic). SPARK_WORKSPACE switches.
+Weighting is SOFT (0.5 + 0.5·align) so an overfit gloria head on the current tiny pool grounds
+without collapsing the signal; it sharpens automatically as the Bold corpus grows.
+Run with the torch venv. SPARK_WORKSPACE switches.
 """
 import os, sys, json, urllib.request
 from datetime import datetime, timezone
@@ -23,11 +26,12 @@ MEMORY = os.path.join(WS, "memory")
 SCRIPTS = os.path.join(WS, "scripts")
 CHAT = os.path.join(MEMORY, "chat-history.json")
 LEDGER = os.path.join(MEMORY, "interaction-ledger.json")
+MODEL = os.path.join(MEMORY, "jepa-predictor.pt")
 OUT = os.path.join(MEMORY, "pressure.json")
 GEMMA = os.environ.get("GEMMA_URL", "http://172.18.16.1:1234/v1/chat/completions")
 GEMMA_MODEL = os.environ.get("GEMMA_MODEL", "google/gemma-4-12b-qat")
 CTX_TURNS = 6
-RECENT_GLORIA = 3         # last N gloria turns (each costs one Gemma call)
+RECENT_GLORIA = 3
 N_CAND = 6
 
 SHAPE_PROBES = {
@@ -39,17 +43,21 @@ SHAPE_PROBES = {
     "play / teasing": "teasing, playful provocation, daring him, wit",
 }
 
-def log(m): print("[pressure-gemma]", m, flush=True)
+def log(m): print("[pressure-v3]", m, flush=True)
 def load(p, d):
     try: return json.load(open(p))
     except Exception: return d
+
+def is_junk(text):
+    t = str(text or "").strip().lower()
+    return len(t) < 2 or t == "test" or t.startswith("test received") or t in ("ok", "okay", ".")
 
 def voice_examples(n=5):
     led = load(LEDGER, [])
     ex = []
     if isinstance(led, list):
         for e in led:
-            if isinstance(e, dict) and e.get("gloria") and e.get("gloria") != "--source":
+            if isinstance(e, dict) and e.get("gloria") and e["gloria"] != "--source" and not is_junk(e["gloria"]):
                 ex.append(str(e["gloria"])[:200])
     return ex[:n]
 
@@ -66,58 +74,77 @@ def gemma(context, examples):
     try:
         req = urllib.request.Request(GEMMA, data=body, headers={"Content-Type": "application/json"})
         r = json.loads(urllib.request.urlopen(req, timeout=60).read())
-        txt = r["choices"][0]["message"]["content"]
-        lines = [l.strip(" -*\t").strip() for l in txt.splitlines()]
+        lines = [l.strip(" -*\t").strip() for l in r["choices"][0]["message"]["content"].splitlines()]
         return [l for l in lines if len(l) > 3][:N_CAND]
     except Exception as e:
         log(f"gemma call failed ({e})"); return []
 
 def main():
-    import numpy as np
+    import numpy as np, torch
     sys.path.insert(0, SCRIPTS)
-    from jepa_predictor import encoder
+    from jepa_predictor import make_net, encoder
     enc = encoder()
     def emb(t): return np.asarray(enc.encode(t, show_progress_bar=False), dtype="float32")
     def unit(v): return v / (np.linalg.norm(v) + 1e-9)
     def cos(a, b): return float(unit(a) @ unit(b))
 
+    net = None
+    if os.path.exists(MODEL):
+        ck = torch.load(MODEL); net = make_net(ck["dim"]); net.load_state_dict(ck["state"]); net.eval()
+    else:
+        log("no gloria head — falling back to unweighted candidates")
+
     hist = [e for e in load(CHAT, []) if isinstance(e, dict) and e.get("content")]
-    idxs = [i for i, e in enumerate(hist) if e.get("role") == "user" and i >= CTX_TURNS][-RECENT_GLORIA:]
+    idxs = [i for i, e in enumerate(hist)
+            if e.get("role") == "user" and i >= CTX_TURNS and not is_junk(e.get("content"))][-RECENT_GLORIA:]
     if not idxs:
-        log("no assessable gloria turns"); return
+        log("no assessable (non-junk) gloria turns"); return
     examples = voice_examples()
     probe_names = list(SHAPE_PROBES)
     probe_vecs = emb([SHAPE_PROBES[k] for k in probe_names])
 
     recent = []
     for i in idxs:
-        ctx = "\n".join(("Gloria: " if hist[j].get("role") == "user" else "Vintos: ")
-                        + str(hist[j].get("content", ""))[:200] for j in range(i - CTX_TURNS, i))
+        ctx_turns = [hist[j] for j in range(i - CTX_TURNS, i) if not is_junk(hist[j].get("content"))]
+        ctx = "\n".join(("Gloria: " if t.get("role") == "user" else "Vintos: ")
+                        + str(t.get("content", ""))[:200] for t in ctx_turns)
         cands = gemma(ctx, examples)
         if len(cands) < 3:
             continue
         C = np.stack([unit(v) for v in emb([c[:200] for c in cands])])
-        centroid = unit(C.mean(axis=0))
-        coherence = round(float(np.mean([float(c @ centroid) for c in C])), 3)   # do candidates agree?
+
+        # gloria head predicts HER next turn from context -> weight candidates by alignment to it
+        weights = np.ones(len(C))
+        ground = None
+        if net is not None:
+            with torch.no_grad():
+                g_pred, _, _, _ = net(torch.tensor(emb([ctx])))
+            gp = unit(g_pred.numpy()[0])
+            aligns = np.array([max(0.0, float(c @ gp)) for c in C])
+            weights = 0.5 + 0.5 * aligns                    # soft grounding, never collapses to 0
+            ground = round(float(aligns.mean()), 3)
+        wsum = weights.sum() or 1.0
+        centroid = unit((C * weights[:, None]).sum(axis=0) / wsum)   # HIS expectation of her
+        coherence = round(float(np.average([float(c @ centroid) for c in C], weights=weights)), 3)
         actual = unit(emb([str(hist[i].get("content", ""))[:400]])[0])
-        avoidance = round(1.0 - max(0.0, float(actual @ centroid)), 3)            # did she go elsewhere?
+        avoidance = round(1.0 - max(0.0, float(actual @ centroid)), 3)
         pressure = round(coherence * avoidance, 3)
         shape = probe_names[int(np.argmax([float(centroid @ pv) for pv in probe_vecs]))] if pressure >= 0.10 else None
-        recent.append({"ts": hist[i].get("timestamp"), "pressure": pressure, "coherence": coherence,
-                       "avoidance": avoidance, "shape": shape, "words": len(str(hist[i].get("content", "")).split()),
-                       "n_candidates": len(cands)})
-        log(f"  {str(hist[i].get('timestamp',''))[:16]}  pressure {pressure} (coh {coherence} x avoid {avoidance}) [{shape}]")
+        recent.append({"ts": hist[i].get("timestamp"), "said": str(hist[i].get("content", ""))[:120],
+                       "pressure": pressure, "coherence": coherence, "avoidance": avoidance,
+                       "ground": ground, "shape": shape})
+        log(f"  pressure {pressure} (coh {coherence} x avoid {avoidance}, ground {ground}) [{shape}]  <- said: {str(hist[i].get('content',''))[:40]!r}")
 
     if not recent:
         log("no pressure computed (gemma unreachable?) — leaving prior pressure.json"); return
     accumulated = round(sum(r["pressure"] for r in recent), 3)
     top = max(recent, key=lambda r: r["pressure"])
-    out = {"generated_at": datetime.now(timezone.utc).isoformat(), "source": "gemma-candidates",
+    out = {"generated_at": datetime.now(timezone.utc).isoformat(), "source": "gemma+gloria-head",
            "accumulated_pressure": accumulated,
            "peak": {"pressure": top["pressure"], "shape": top["shape"], "coherence": top["coherence"],
-                    "avoidance": top["avoidance"], "ts": top["ts"]},
+                    "avoidance": top["avoidance"], "ground": top["ground"], "ts": top["ts"]},
            "recent": recent,
-           "note": "shape gestures at the avoided expectation; the candidate lines are never stored. there was something here."}
+           "note": "shape gestures at the avoided expectation (his gloria-head-grounded); candidate lines never stored."}
     json.dump(out, open(OUT, "w"), indent=2)
     log(f"accumulated pressure {accumulated} over {len(recent)} turns -> {OUT}")
 
