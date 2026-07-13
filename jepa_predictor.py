@@ -47,6 +47,28 @@ def encoder():
 def turns_of(hist):
     return [e for e in hist if isinstance(e, dict) and e.get("content")]
 
+def _ledger_turns():
+    """The conversation ledger holds the IMPLANTED exchanges — how Gloria actually responds
+    (transplanted from Bold). Chat-history is sparse; these teach the gloria head her real voice.
+    Filters the broken '--source voice' junk. TRAINING only — predict() still uses live chat."""
+    led = load(os.path.join(MEMORY, "interaction-ledger.json"), [])
+    out = []
+    if isinstance(led, list):
+        for e in led:
+            if not isinstance(e, dict): continue
+            g, v, ts = e.get("gloria"), e.get("vintos"), e.get("timestamp", "")
+            if g and g != "--source": out.append({"role": "user", "content": g, "timestamp": ts})
+            if v and v != "voice":    out.append({"role": "assistant", "content": v, "timestamp": ts})
+    return out
+
+def training_turns():
+    """chat-history + the implanted ledger exchanges, deduped, time-ordered — the corpus of Gloria."""
+    chat = turns_of(load(CHAT, []))
+    seen = {str(t.get("content", ""))[:80] for t in chat}
+    merged = chat + [t for t in _ledger_turns() if str(t.get("content", ""))[:80] not in seen]
+    merged.sort(key=lambda t: str(t.get("timestamp", "")))
+    return merged
+
 def _rid(e):  # must match presence_audit.py's rid()
     return hashlib.md5((str(e.get("timestamp","")) + str(e.get("content",""))[:40]).encode()).hexdigest()[:10]
 
@@ -99,9 +121,10 @@ def make_net(dim):
 
 def train():
     import numpy as np, torch
-    turns = turns_of(load(CHAT, []))
+    turns = training_turns()                    # chat-history + implanted ledger (Gloria's real voice)
     if len(turns) <= CTX_TURNS + 2:
         log(f"not enough history ({len(turns)} turns)"); return
+    log(f"training corpus: {len(turns)} turns ({len(turns_of(load(CHAT, [])))} chat + ledger)")
     enc = encoder()
     X, Y, H = build_pairs(turns, enc)
     Xt, Yt, Ht = torch.tensor(X), torch.tensor(Y), torch.tensor(H).long()
