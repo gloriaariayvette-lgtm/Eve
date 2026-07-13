@@ -99,7 +99,7 @@ def main():
         press = pressure_of(div, sparse)
         gap = unit(pred) - unit(actual)                 # points toward the unsaid
         sims = [cos(gap, pv) for pv in probe_vecs]
-        shape = probe_names[int(np.argmax(sims))] if press >= 0.12 else None
+        shape = probe_names[int(np.argmax(sims))] if press >= 0.10 else None
         rec = {"ts": hist[i].get("timestamp"), "pressure": press,
                "confidence": sparse,                     # deliberate-looking = said little when more expected
                "divergence": round(div, 3), "words": len(actual_text.split()),
