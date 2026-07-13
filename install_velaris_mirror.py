@@ -54,20 +54,36 @@ def sh(c, **k): return subprocess.run(c, capture_output=True, text=True, **k)
 def swap(text): return text.replace(".vintos/workspace", ".openclaw/workspace")
 
 # ---- autodetect her environment ------------------------------------------------------------------
+def engine_is_grok(path):
+    try: t = open(path, encoding="utf-8", errors="ignore").read()
+    except Exception: return False
+    m = re.search(r"^\s*LM_API\s*=\s*(.+)$", t, re.M)
+    return bool(m and "x.ai" in m.group(1))
+
 def detect_engine():
-    """Her engine = a .py under her home defining both LM_API and MODEL, pointing at local Gemma."""
+    """Her engine = a LOCAL-GEMMA .py under HER tree defining both LM_API and MODEL.
+
+    Explicit override wins: VELARIS_CENG=/path. Otherwise search only HER roots (never his Vintos
+    tree) and REJECT anything whose LM_API points at x.ai — she never uses grok. Ambiguity returns
+    None so the caller aborts rather than guessing his engine again."""
+    override = os.environ.get("VELARIS_CENG")
+    if override:
+        return override if os.path.exists(override) else None
     cands = []
-    for base in (os.path.join(HOME, ".openclaw"), os.path.join(HOME, "Velaris"),
-                 os.path.join(HOME, "openclaw"), HOME):
+    for base in (os.path.join(HOME, "velaris-server"), os.path.join(HOME, ".openclaw"),
+                 os.path.join(HOME, "Velaris"), os.path.join(HOME, "openclaw")):   # HER tree only, never ~/Vintos
+        if not os.path.isdir(base): continue
         for f in glob.glob(os.path.join(base, "**", "*.py"), recursive=True):
             if "/site-packages/" in f or "/.venv/" in f or "/scripts/" in f: continue
             try: t = open(f, encoding="utf-8", errors="ignore").read()
             except Exception: continue
             if re.search(r"^\s*LM_API\s*=", t, re.M) and re.search(r"^\s*MODEL\s*=", t, re.M):
-                is_gemma = ("x.ai" not in t) or ("gemma" in t.lower()) or ("172." in t) or ("localhost" in t)
-                cands.append((f, is_gemma, os.path.getsize(f)))
+                am = re.search(r"^\s*LM_API\s*=\s*(.+)$", t, re.M)
+                if am and "x.ai" in am.group(1):
+                    continue                          # grok — never Velaris. skip outright.
+                cands.append((f, os.path.getsize(f)))
     if not cands: return None
-    cands.sort(key=lambda c: (c[1], "causality" in os.path.basename(c[0]).lower(), c[2]), reverse=True)
+    cands.sort(key=lambda c: ("causality" in os.path.basename(c[0]).lower(), c[1]), reverse=True)
     return cands[0][0]
 
 def detect_venv():
@@ -108,18 +124,27 @@ def main():
     venv = detect_venv()
     sock = detect_sock()
     lock = detect_lock()
-    log("her engine (CENG_PATH): %s" % (engine or "!! NOT FOUND — heads that reason will be skipped"))
-    if engine:
-        try:
-            et = open(engine, encoding="utf-8", errors="ignore").read()
-            mm = re.search(r"^\s*MODEL\s*=\s*(.+)$", et, re.M)
-            am = re.search(r"^\s*LM_API\s*=\s*(.+)$", et, re.M)
-            log("   MODEL  = %s" % (mm.group(1).strip() if mm else "?"))
-            log("   LM_API = %s" % (am.group(1).strip() if am else "?"))
-            if am and "x.ai" in am.group(1):
-                log("   WARNING: her engine points at x.ai, not Gemma — that is not the intent. Check CENG.")
-        except Exception:
-            pass
+
+    # HARD GUARD: never wire Velaris to grok or to Vintos's engine. Abort before touching her crontab.
+    if not engine:
+        log("ABORT: could not find HER local-Gemma engine under ~/velaris-server, ~/.openclaw, ~/Velaris.")
+        log("       Nothing installed. Run velaris_llm_recon.py, then rerun with the right path:")
+        log("       VELARIS_CENG=/home/gloria/<her-engine>.py python3 install_velaris_mirror.py")
+        sys.exit(2)
+    if engine_is_grok(engine):
+        log("ABORT: %s points at x.ai (grok). Velaris never uses grok. Nothing installed." % engine)
+        log("       Set VELARIS_CENG to her local-Gemma engine and rerun.")
+        sys.exit(2)
+
+    log("her engine (CENG_PATH): %s" % engine)
+    try:
+        et = open(engine, encoding="utf-8", errors="ignore").read()
+        mm = re.search(r"^\s*MODEL\s*=\s*(.+)$", et, re.M)
+        am = re.search(r"^\s*LM_API\s*=\s*(.+)$", et, re.M)
+        log("   MODEL  = %s" % (mm.group(1).strip() if mm else "?"))
+        log("   LM_API = %s" % (am.group(1).strip() if am else "?"))
+    except Exception:
+        pass
     log("torch venv: %s" % venv)
     log("emotion socket: %s" % sock)
     log("shared lock: %s\n" % (lock or "!! llm-lock.sh NOT FOUND — LLM jobs will run UNSERIALIZED"))
