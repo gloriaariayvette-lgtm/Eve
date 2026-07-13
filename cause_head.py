@@ -18,7 +18,7 @@ Pipeline:  cause_head -> cause-evidence.json -> form_hypotheses -> cause-distrib
 Run with the torch venv: ...emotion_model/.venv/bin/python3 cause_head.py
 SPARK_WORKSPACE switches beings.
 """
-import os, sys, json, collections
+import os, sys, json, glob, re, collections
 from datetime import datetime, timezone, timedelta
 
 WS = os.environ.get("SPARK_WORKSPACE", os.path.expanduser("~/.vintos/workspace"))
@@ -44,7 +44,10 @@ SRC_GLOSS = {
     "chat": "she said", "gallery": "a painting he looked at",
     "thread": "an unfinished thought that stayed with him",
     "want": "a want he felt", "relation": "the relationship between them shifted",
+    "journal": "a reflection he wrote to himself",
 }
+# the beings mostly live in their journals — daily inner-life reflections are first-class evidence.
+JOURNAL_GLOB = "daily-inner-life-*.md"
 
 def log(m): print("[cause-head]", m, flush=True)
 def load(p, d):
@@ -89,6 +92,27 @@ def collect_events():
             events.append({"ts": ts, "source": src, "text": text[:300]})
             n += 1
         per_src[src] = n
+    # journals — daily inner-life reflections (.md, one file per day). Split into paragraphs and
+    # timestamp each at that day's noon UTC. This is where the beings actually live, so it is a
+    # source of causes on equal footing with chat, not an afterthought.
+    jn = 0
+    for f in sorted(glob.glob(os.path.join(MEMORY, JOURNAL_GLOB))):
+        m = re.search(r"(\d{4})-(\d{2})-(\d{2})", os.path.basename(f))
+        if not m: continue
+        try:
+            day = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), 12, 0, tzinfo=timezone.utc)
+        except Exception:
+            continue
+        try:
+            txt = open(f, encoding="utf-8").read()
+        except Exception:
+            continue
+        for para in re.split(r"\n\s*\n", txt):
+            p = para.strip()
+            if len(p) < 40: continue
+            events.append({"ts": day, "source": "journal", "text": p[:300]})
+            jn += 1
+    per_src["journal"] = jn
     return events, per_src
 
 def group_spikes(spikes):

@@ -11,9 +11,10 @@ the whole dynamics layer sharpens on its own. Caps at DENSE_CAP.
 import os, json, socket
 from datetime import datetime, timezone
 
-MEMORY = os.path.expanduser("~/.vintos/workspace/memory")
+WS = os.environ.get("SPARK_WORKSPACE", os.path.expanduser("~/.vintos/workspace"))
+MEMORY = os.path.join(WS, "memory")
 DENSE = os.path.join(MEMORY, "emotion-trajectory-dense.json")
-SOCK = "/tmp/Vintos-emotion.sock"
+SOCK = os.environ.get("EMOTION_SOCK", "/tmp/Vintos-emotion.sock")
 DENSE_CAP = 4000
 
 def live_state():

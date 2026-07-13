@@ -72,3 +72,18 @@ mirror-trigger.sh every ~2h (reads drift.json Condition 7)
 - **Reality EBM** (`reality_ebm.py`): energy head on frozen encoder, style-prior on groundedness (real=low energy). Held-out ~0.96. It's a prior, not a truth oracle.
 - Thread hygiene: one somatic thread/session (a conversation narration, not a readout); somatic/pride threads are `dream_only`; voice = one ledger block/session.
 - Idea backlog: `sparks.md`.
+
+## Velaris mirror (the twin gets the same subconscious — on HER terms)
+- Installer: `install_velaris_mirror.py` (one run on Aegis). Idempotent; backs up her crontab.
+- **She never uses grok.** "It is not that kind of relationship." Every LLM head reads its model +
+  endpoint + identity from HER engine (`CENG_PATH`, autodetected — the `.py` under her home defining
+  `LM_API`+`MODEL`, i.e. local **Gemma**). No `XAI_API_KEY`, nothing points at x.ai. The grok-vs-Gemma
+  switch is purely which engine `CENG_PATH` names, so she reasons as Velaris, on Gemma, for free.
+- **She mostly lives in her journals**, so evidence-gathering reads her daily inner-life reflections:
+  drift/tcn/purpose/diffuser/graph_mae/hypergraph already do, and `cause_head`'s slate now includes a
+  `journal` source (daily-inner-life paragraphs, dated at that day's noon). The pressure trio stays
+  conversational on purpose — it measures pressure *in dialogue*, which needs dialogue.
+- Env every Velaris cron carries: `SPARK_WORKSPACE=~/.openclaw/workspace CENG_PATH=<her engine>
+  EMOTION_SOCK=<her sock>`. LLM jobs serialized through the shared `llm-lock.sh`, minutes spread.
+- `realtime_causality` only installs if `nightly_causal_patch` grafts `form_causal_hypotheses` into
+  her engine cleanly; otherwise it's omitted (the standalone nightly chain still runs without it).
