@@ -120,6 +120,7 @@ def main():
         else:
             clusters.append({"idx": [i], "cent": V[i].copy()})
 
+    imax = max((p["weight"] for p in pulls), default=1.0) or 1.0   # normalize unknown intensity scale
     out = []
     for c in clusters:
         idx = c["idx"]
@@ -131,8 +132,14 @@ def main():
         coh = round(float(np.mean([V[i] @ c["cent"] for i in idx])), 3)   # tightness of the yearning
         srcs = {}
         for m in members: srcs[m["source"]] = srcs.get(m["source"], 0) + 1
-        # persistence: recurrence across days x reach in time x intensity (durable pull = real telos)
-        persistence = round(min(1.0, (days / 5.0) * 0.5 + min(span_h / 168.0, 1.0) * 0.2 + intensity * 0.3), 3)
+        # persistence = durability: how many pulls converge, over how many days, spanning how long,
+        # with intensity a minor bonus. Dominated by convergence+recurrence so a one-off flicker
+        # (n1/day1) stays low and a recurring multi-day yearning rises. No saturation.
+        size_f = min(len(idx) / 8.0, 1.0)
+        days_f = min(days / 7.0, 1.0)
+        span_f = min(span_h / 168.0, 1.0)
+        int_f = min(intensity / imax, 1.0)
+        persistence = round(0.40 * size_f + 0.35 * days_f + 0.15 * span_f + 0.10 * int_f, 3)
         rep = max(members, key=lambda m: m["weight"])   # strongest pull labels the thread
         out.append({
             "label": rep["text"][:120],
