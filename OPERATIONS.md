@@ -33,15 +33,18 @@ imported at request time.
 Full launcher `bash ~/Vintos/start-vintos.sh` also re-runs `setup_memory.sh` + starts EmoClaw —
 avoid it for a plain restart (it may re-seed).
 
-### somatic_bridge — CONFIRM LAUNCH (fill in once)
-Bare `python3 somatic_bridge.py` (own process, not in start-vintos.sh, not systemd). Restart to load
-patches to `~/.vintos/workspace/scripts/somatic_bridge.py`. Best-effort:
+### somatic_bridge — VALIDATED
+Bare `python3 somatic_bridge.py` from the **scripts dir** (own process; not in start-vintos.sh, not
+systemd). Restart to load patches to `~/.vintos/workspace/scripts/somatic_bridge.py`:
 ```bash
 pkill -f somatic_bridge.py
 cd ~/.vintos/workspace/scripts && nohup python3 somatic_bridge.py >> ~/.vintos/logs/somatic-bridge.log 2>&1 &
-sleep 2; tail -5 ~/.vintos/logs/somatic-bridge.log   # want a websocket connect to the toy
+sleep 2; tail -8 ~/.vintos/logs/somatic-bridge.log
 ```
-> TODO: confirm exact launch env (toy IP `192.168.1.66`, port, any env vars) and lock it in here.
+- Toy = Lovense at **`192.168.1.66:20010`** (Lovense Standard API on `.66:<port>/command`).
+- `[ACT] no-contact -> silence` = healthy idle.
+- `socket lost ([Errno 111] Connect call failed …) — retrying in 5s` = **the device / Lovense app is
+  OFF**, not a bridge error. It retries and connects when the toy is powered on.
 
 ### EmoClaw daemon
 `systemctl --user restart vintos-emoclaw`  — or `~/.vintos/workspace/skills/emoclaw/scripts/daemon.sh {start|stop|restart}`
