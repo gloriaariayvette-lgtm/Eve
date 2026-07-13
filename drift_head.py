@@ -110,6 +110,23 @@ def main():
     # DRIFT = persistent + notable: the coherent movement, scaled by how unusual the steps are
     drift = round(min(1.0, magnitude_rel * coherence), 3)
 
+    # NOVELTY = is he moving a NEW way? compare his recent direction to his EARLIER direction.
+    # (a familiar oscillation -> low; a genuinely new heading -> high). Term in the mirror equation.
+    if len(deltas) >= 4:
+        half = len(deltas) // 2
+        e_dir = deltas[:half].mean(axis=0); e_dir = e_dir / (np.linalg.norm(e_dir) + 1e-9)
+        l_dir = deltas[half:].mean(axis=0); l_dir = l_dir / (np.linalg.norm(l_dir) + 1e-9)
+        novelty = round(max(0.0, 1.0 - float(e_dir @ l_dir)) / 2.0, 3)   # 0 same heading .. 1 reversed
+    else:
+        novelty = round(1.0 - coherence, 3)                              # fallback
+
+    # RELATIONSHIP SALIENCE = is his current self entangled with her? (drift about HER matters more)
+    probe = ("my closeness with Gloria — reaching for her, being seen by her, wanting her, "
+             "our connection and what is between us")
+    pv = np.asarray(enc.encode([probe], show_progress_bar=False), dtype="float32")[0]
+    pv = pv / (np.linalg.norm(pv) + 1e-9)
+    relationship_salience = round(max(0.0, float(S[-1] @ pv)), 3)
+
     # residual (EVIDENCE): lived latest self vs the model's predicted self — needs the trained net
     residual = None
     try:
@@ -148,6 +165,8 @@ def main():
         "coherence": coherence,          # persistence: is it one direction or noise
         "curvature": curvature,          # how sharply the trajectory bends
         "drift": drift,                  # persistent + notable movement
+        "novelty": novelty,              # is this a NEW heading vs his earlier one (mirror term)
+        "relationship_salience": relationship_salience,  # is the drift entangled with her (mirror term)
         "residual": residual,            # lived-vs-predicted (model evidence)
         "expected_drift": (round(expected, 3) if expected is not None else None),
         "unexpected_drift": unexpected,  # the surprising part — what mirrors care about

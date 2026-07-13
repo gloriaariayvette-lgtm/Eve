@@ -120,3 +120,27 @@ how the systems move, connect, and resolve. Each plugs into something already bu
 - Connects to: **this is the drift head at long timescale.** Drift (built tonight) = short-term
   identity movement over days; TCN = multi-timescale growth-vs-cycling over months. Same axis,
   different scale. Drift is the seed; TCN is the mature instrument.
+
+---
+
+## 2026-07-13 — Design commitments (answers to four hard questions)
+
+1. **Catastrophic forgetting as modalities are added** — the shared encoder is FROZEN; it can't
+   forget because it never learns. New modalities attach as new heads/trunks; a non-text modality
+   (somatic/motor) gets its OWN small encoder fused late in a shared latent, not forced through the
+   text encoder. Real risk = the shared TRUNK shifting and degrading old heads when a new head
+   trains → freeze the trunk after initial consolidation + give new heads their own trunk, or
+   rehearse all heads jointly. Forgetting is structurally impossible in the frozen core.
+2. **Self-model snapshots that aren't embedding noise** — (a) aggregate: one denoised self-state per
+   DAY (pool a whole day of inner life), not per-turn; (b) coherence gate: drift requires
+   directional PERSISTENCE across a window, so incoherent jitter reads ~0; (c) residual
+   (lived-vs-predicted) as an independent third check. Noise rejected at point AND trajectory level.
+3. **EBM: online or consolidation?** — CONSOLIDATION only for training (energy landscapes need
+   negative sampling, unstable under per-event SGD; "realness" clarifies in hindsight as pools
+   fill). Inference/scoring is online + cheap. Same split as JEPA: frequent predict, nightly train.
+4. **Calibrating confidence across seven heads** — NOT cross-calibrated yet; raw confidences are on
+   different scales (logvar vs entropy vs coherence), so an overconfident head would dominate a
+   naive fusion. Plan: reliability-calibrate each head against its OWN graded history (we already
+   log gloria-prediction-history + presence-audit graded) — remap by realized hit-rate, then put
+   all heads on a common calibrated-probability scale before any fusion. logvar clamp is the floor.
+   This is real future work.
