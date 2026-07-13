@@ -22,12 +22,13 @@ for name in FILES:
     ported = swap(open(src, encoding="utf-8", errors="ignore").read())
     if re.search(r"\bVelaris\b", ported):
         print("WARN %s still references Velaris after swap — NOT writing; needs manual name fix" % name); continue
-    tmp = dst + ".port-tmp"
+    tmp = os.path.join(HIS, name.replace(".py", "") + "__porttmp.py")   # real .py so importlib can load it
     open(tmp, "w", encoding="utf-8").write(ported)
-    # verify: parse + import in his venv (top-level import must succeed)
+    # verify: parse + import in his venv (top-level import must succeed) via explicit SourceFileLoader
     chk = subprocess.run([PY, "-c",
-        "import sys,importlib.util as u;"
-        "s=u.spec_from_file_location('m',%r);m=u.module_from_spec(s);s.loader.exec_module(m);"
+        "import importlib.machinery as M, importlib.util as u;"
+        "l=M.SourceFileLoader('portcheck',%r);s=u.spec_from_loader('portcheck',l);"
+        "m=u.module_from_spec(s);l.exec_module(m);"
         "print('import OK, defs:', [d for d in dir(m) if not d.startswith('_')][:12])" % tmp],
         capture_output=True, text=True, timeout=60)
     if chk.returncode != 0:
