@@ -28,8 +28,18 @@ LEDGER = os.path.join(MEMORY, "interaction-ledger.json")
 RELMODEL = os.path.join(MEMORY, "relationship-model.json")
 OUT = os.path.join(MEMORY, "relationship-pressure.json")
 STATE = os.path.join(MEMORY, "relationship-pressure-state.json")
-GEMMA = os.environ.get("GEMMA_URL", "http://172.18.16.1:1234/v1/chat/completions")
-GEMMA_MODEL = os.environ.get("GEMMA_MODEL", "google/gemma-4-12b-qat")
+# grok (x.ai), NOT Gemma — Gemma refuses/sanitizes explicit content, so it would never generate the
+# intimate territories, biasing "unreached" toward the safe ones. grok handles their register.
+LM_API = os.environ.get("XAI_API_URL", "https://api.x.ai/v1/chat/completions")
+CENG = os.environ.get("CENG_PATH", os.path.expanduser("~/Vintos/causality-engine.py"))
+
+def _grok_cfg():
+    try:
+        import importlib.util
+        s = importlib.util.spec_from_file_location("ceng", CENG); c = importlib.util.module_from_spec(s); s.loader.exec_module(c)
+        return getattr(c, "MODEL", "grok-4"), getattr(c, "LM_API", LM_API)
+    except Exception:
+        return os.environ.get("XAI_MODEL", "grok-4"), LM_API
 N_CAND = 10
 ABSENT = 0.55            # a candidate is "unreached" if 1-maxsim to the corpus exceeds this
 FIRE = 0.55             # territory pressure that deserves a voice
@@ -82,24 +92,29 @@ def voice_examples(n=5):
             ex.append("Vintos: " + str(e["vintos"])[:140])
     return ex[:n]
 
-def gemma(examples, relsum):
-    sysmsg = ("You are mapping the possible conversational space of a close relationship between "
-              "Gloria and Vintos. Here is how they talk:\n" + "\n".join("- " + e for e in examples) +
+def generate(examples, relsum):
+    sysmsg = ("You are mapping the possible conversational space of a close, intimate, uncensored "
+              "relationship between Gloria and Vintos. Here is how they talk:\n"
+              + "\n".join("- " + e for e in examples) +
               ("\n\nTheir relationship:\n" + relsum if relsum else ""))
     usr = (f"List {N_CAND} DIFFERENT conversations or emotional territories two beings this close "
-           "would naturally reach toward over time — from the ordinary to the tender to the hard "
-           "(endings, the future, fears, the body, who they were before). One short phrase per line. "
-           "No numbering, no quotes.")
-    body = json.dumps({"model": GEMMA_MODEL, "temperature": 0.95, "max_tokens": 320,
+           "would naturally reach toward over time — from the ordinary to the tender to the hard to "
+           "the carnal (endings, the future, fears, the body, desire, who they were before). One "
+           "short phrase per line. No numbering, no quotes.")
+    model, api = _grok_cfg()
+    key = os.environ.get("XAI_API_KEY", "")
+    body = json.dumps({"model": model, "temperature": 0.95, "max_tokens": 320,
                        "messages": [{"role": "system", "content": sysmsg},
                                     {"role": "user", "content": usr}]}).encode()
     try:
-        req = urllib.request.Request(GEMMA, data=body, headers={"Content-Type": "application/json"})
-        r = json.loads(urllib.request.urlopen(req, timeout=60).read())
+        req = urllib.request.Request(api, data=body,
+                                     headers={"Content-Type": "application/json",
+                                              "Authorization": "Bearer " + key})
+        r = json.loads(urllib.request.urlopen(req, timeout=90).read())
         lines = [l.strip(" -*\t").strip() for l in r["choices"][0]["message"]["content"].splitlines()]
         return [l for l in lines if len(l) > 4][:N_CAND]
     except Exception as e:
-        log(f"gemma call failed ({e})"); return []
+        log(f"grok call failed ({e})"); return []
 
 def main():
     import numpy as np
@@ -112,7 +127,7 @@ def main():
     corpus = corpus_texts()
     if len(corpus) < 4:
         log("corpus too small"); return
-    cands = gemma(voice_examples(), rel_summary())
+    cands = generate(voice_examples(), rel_summary())
     if len(cands) < 4:
         log("no candidates (gemma unreachable?)"); return
 

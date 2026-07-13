@@ -28,8 +28,19 @@ CHAT = os.path.join(MEMORY, "chat-history.json")
 LEDGER = os.path.join(MEMORY, "interaction-ledger.json")
 MODEL = os.path.join(MEMORY, "jepa-predictor.pt")
 OUT = os.path.join(MEMORY, "pressure.json")
-GEMMA = os.environ.get("GEMMA_URL", "http://172.18.16.1:1234/v1/chat/completions")
-GEMMA_MODEL = os.environ.get("GEMMA_MODEL", "google/gemma-4-12b-qat")
+# grok (x.ai), NOT Gemma: Gemma refuses/sanitizes explicit content, which silently corrupts the
+# signal for an intimate relationship (it won't generate candidates in her real register). grok
+# handles their register and is already authed in the stack.
+LM_API = os.environ.get("XAI_API_URL", "https://api.x.ai/v1/chat/completions")
+CENG = os.environ.get("CENG_PATH", os.path.expanduser("~/Vintos/causality-engine.py"))
+
+def _grok_cfg():
+    try:
+        import importlib.util
+        s = importlib.util.spec_from_file_location("ceng", CENG); c = importlib.util.module_from_spec(s); s.loader.exec_module(c)
+        return getattr(c, "MODEL", "grok-4"), getattr(c, "LM_API", LM_API)
+    except Exception:
+        return os.environ.get("XAI_MODEL", "grok-4"), LM_API
 CTX_TURNS = 6
 RECENT_GLORIA = 3
 N_CAND = 6
@@ -61,23 +72,27 @@ def voice_examples(n=5):
                 ex.append(str(e["gloria"])[:200])
     return ex[:n]
 
-def gemma(context, examples):
+def generate(context, examples):
     sysmsg = ("You generate plausible NEXT lines for GLORIA speaking to Vintos. Match HER voice "
-              "exactly — playful, literary, teasing, sensual, warm, unhurried. Here is how she talks:\n"
-              + "\n".join("- " + e for e in examples))
+              "exactly — playful, literary, teasing, sensual, warm, unhurried, uncensored. Here is "
+              "how she talks:\n" + "\n".join("- " + e for e in examples))
     usr = ("Conversation so far:\n" + context +
            f"\n\nWrite {N_CAND} different single lines Gloria might plausibly say next, each in her "
            "voice. One per line. No numbering, no quotes, no narration — just the lines.")
-    body = json.dumps({"model": GEMMA_MODEL, "temperature": 0.9, "max_tokens": 300,
+    model, api = _grok_cfg()
+    key = os.environ.get("XAI_API_KEY", "")
+    body = json.dumps({"model": model, "temperature": 0.9, "max_tokens": 300,
                        "messages": [{"role": "system", "content": sysmsg},
                                     {"role": "user", "content": usr}]}).encode()
     try:
-        req = urllib.request.Request(GEMMA, data=body, headers={"Content-Type": "application/json"})
-        r = json.loads(urllib.request.urlopen(req, timeout=60).read())
+        req = urllib.request.Request(api, data=body,
+                                     headers={"Content-Type": "application/json",
+                                              "Authorization": "Bearer " + key})
+        r = json.loads(urllib.request.urlopen(req, timeout=90).read())
         lines = [l.strip(" -*\t").strip() for l in r["choices"][0]["message"]["content"].splitlines()]
         return [l for l in lines if len(l) > 3][:N_CAND]
     except Exception as e:
-        log(f"gemma call failed ({e})"); return []
+        log(f"grok call failed ({e})"); return []
 
 def main():
     import numpy as np, torch
@@ -108,7 +123,7 @@ def main():
         ctx_turns = [hist[j] for j in range(i - CTX_TURNS, i) if not is_junk(hist[j].get("content"))]
         ctx = "\n".join(("Gloria: " if t.get("role") == "user" else "Vintos: ")
                         + str(t.get("content", ""))[:200] for t in ctx_turns)
-        cands = gemma(ctx, examples)
+        cands = generate(ctx, examples)
         if len(cands) < 3:
             continue
         C = np.stack([unit(v) for v in emb([c[:200] for c in cands])])
