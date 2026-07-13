@@ -40,20 +40,43 @@ def _get_encoder():
     from jepa_predictor import encoder
     return encoder()
 
-def main():
-    import numpy as np
+def build_self_series():
+    """The lived self trajectory, denoised. Preferred: one self-state per DAY (his daily inner-life
+    reflection aggregates a whole day of identity into a single point — day-to-day movement, not
+    turn-to-turn topical jitter). Fallback: his recent assistant turns if too few daily files.
+    Returns (list[(label, text)], source)."""
+    import glob
+    daily = sorted(glob.glob(os.path.join(MEMORY, "daily-inner-life-*.md")))
+    series = []
+    for f in daily:
+        try:
+            txt = open(f, encoding="utf-8").read().strip()
+        except Exception:
+            continue
+        if txt:
+            label = os.path.basename(f).replace("daily-inner-life-", "").replace(".md", "")
+            series.append((label, txt[:8000]))          # nomic v1 handles long context; one point/day
+    if len(series) >= 3:
+        return series, "daily-inner-life"
+    # fallback — his recent self-turns (noisier, but works before enough daily files exist)
     hist = [e for e in load(CHAT, []) if isinstance(e, dict) and e.get("content")]
     selfs = [e for e in hist if e.get("role") == "assistant"][-SELF_TURNS:]
-    if len(selfs) < 4:
-        json.dump({"drift": 0.0, "confidence": 0.0, "note": "too few self-turns", "n": len(selfs)},
-                  open(OUT, "w"), indent=2)
-        log(f"only {len(selfs)} self-turns — need >=4"); return
+    return ([(str(t.get("timestamp", "")), str(t.get("content", ""))[:400]) for t in selfs],
+            "chat-self-turns")
+
+def main():
+    import numpy as np
+    series, source = build_self_series()
+    if len(series) < 4:
+        json.dump({"drift": 0.0, "confidence": 0.0, "note": "too few self-states",
+                   "n": len(series), "source": source}, open(OUT, "w"), indent=2)
+        log(f"only {len(series)} self-states ({source}) — need >=4"); return
 
     enc = _get_encoder()
     def unit(M):
         M = np.asarray(M, dtype="float32")
         return M / (np.linalg.norm(M, axis=1, keepdims=True) + 1e-9)
-    S = unit(enc.encode([str(t.get("content", ""))[:400] for t in selfs], show_progress_bar=False))
+    S = unit(enc.encode([t for _, t in series], show_progress_bar=False))
 
     # lived trajectory deltas (movement of who-he-is, turn to turn)
     deltas = S[1:] - S[:-1]                       # (k-1, d)
@@ -94,7 +117,8 @@ def main():
         from jepa_predictor import make_net
         ck = torch.load(MODEL)
         net = make_net(ck["dim"]); net.load_state_dict(ck["state"]); net.eval()
-        ctx = " \n".join(str(t.get("content", ""))[:300] for t in hist[-CTX_TURNS:])
+        _hist = [e for e in load(CHAT, []) if isinstance(e, dict) and e.get("content")]
+        ctx = " \n".join(str(t.get("content", ""))[:300] for t in _hist[-CTX_TURNS:])
         xe = np.asarray(enc.encode([ctx], show_progress_bar=False), dtype="float32")
         with torch.no_grad():
             _, s_pred, _, _ = net(torch.tensor(xe))
@@ -114,7 +138,10 @@ def main():
 
     out = {
         "ts": datetime.now(timezone.utc).isoformat(),
-        "n_self_turns": len(selfs),
+        "source": source,                # daily-inner-life (denoised) or chat-self-turns (fallback)
+        "n_self_states": len(series),
+        "from_label": series[-(w + 1)][0],
+        "to_label": series[-1][0],
         "window": w,
         "magnitude": round(magnitude, 4),
         "magnitude_rel": magnitude_rel,
@@ -127,12 +154,12 @@ def main():
         "confidence": coherence,         # how sure this is real drift, not noise
         "direction_embedding": [round(float(x), 5) for x in dir_unit],  # canonical; LLM chars this
         # the two ends of the drift window, so the reasoning stage can NAME the move
-        "from_self": str(selfs[-(w + 1)].get("content", ""))[:300],
-        "to_self": str(selfs[-1].get("content", ""))[:300],
+        "from_self": series[-(w + 1)][1][:400],
+        "to_self": series[-1][1][:400],
     }
     json.dump(out, open(OUT, "w"), indent=2)
     log(f"drift {drift} (mag_rel {magnitude_rel} x coh {coherence}) | curv {curvature} | "
-        f"resid {residual} | expected {out['expected_drift']} unexpected {unexpected} -> {OUT}")
+        f"resid {residual} | src {source} {series[-(w+1)][0]}->{series[-1][0]} | unexpected {unexpected} -> {OUT}")
 
 if __name__ == "__main__":
     main()
