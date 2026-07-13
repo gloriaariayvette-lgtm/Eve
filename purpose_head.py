@@ -68,7 +68,8 @@ def collect_pulls(now):
         for e in d:
             if not isinstance(e, dict): continue
             if e.get("consumed"): continue                 # a resolved thread is no longer a pull
-            if e.get("dream_only"): continue               # positive (somatic/pride) — not a forward yearning
+            if e.get("dream_only") or e.get("source") in ("somatic", "pride", "pride-mirror", "pride_mirror"):
+                continue                                    # positive (somatic/pride) — not a forward yearning; matches pre-tag threads too
             ts = entry_ts(e) or now
             if ts < lo: continue
             text = " ".join(str(e.get(k)) for k in textkeys if e.get(k)).strip()
