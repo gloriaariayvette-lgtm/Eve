@@ -46,6 +46,11 @@ def gather():
         txt = e.get("statement") or ""
         if txt and e.get("id") not in items:
             items[e.get("id", txt[:24])] = (txt, 1 if e.get("is_real") else 0)
+    # his ACTUAL flagged confabulations — natural language, not step-log format. Teaches the real
+    # confabulation-smell instead of one structural quirk (the imagined_pool is homogeneous).
+    for e in load(os.path.join(MEMORY, "hallucination-flags.json"), []):
+        if isinstance(e, dict) and e.get("excerpt"):
+            items[e.get("id", e["excerpt"][:24])] = (e["excerpt"], 0)
     texts = [t for t, _ in items.values()]
     labels = [l for _, l in items.values()]
     return texts, labels
@@ -54,36 +59,52 @@ def make_net(dim):
     import torch.nn as nn
     return nn.Sequential(nn.Linear(dim, dim // 2), nn.GELU(), nn.Linear(dim // 2, 1))  # -> energy scalar
 
+def _fit(Xt, yt, dim, n_pos, n_neg, epochs=400):
+    import torch
+    net = make_net(dim)
+    opt = torch.optim.Adam(net.parameters(), lr=1e-3, weight_decay=1e-4)
+    pos_weight = torch.tensor([n_neg / max(1, n_pos)], dtype=torch.float32)
+    lossf = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)   # P(real)=sigmoid(-energy); balance
+    for _ in range(epochs):
+        opt.zero_grad()
+        loss = lossf(-net(Xt), yt)
+        if not torch.isfinite(loss): break
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
+        opt.step()
+    return net
+
 def train():
-    import numpy as np, torch
+    import numpy as np, torch, random
     texts, labels = gather()
     n_pos, n_neg = labels.count(1), labels.count(0)
     if n_pos < 3 or n_neg < 3:
         log(f"not enough labeled data (real {n_pos}, imagined {n_neg}) — skipping"); return
-    log(f"corpus: {n_pos} real, {n_neg} imagined")
+    log(f"corpus: {n_pos} real, {n_neg} imagined (incl. hallucination-flags)")
     enc = encoder()
     X = np.asarray(enc.encode([t[:400] for t in texts], show_progress_bar=False), dtype="float32")
-    Xt = torch.tensor(X)
-    yt = torch.tensor(labels, dtype=torch.float32).view(-1, 1)         # 1 = real
-    net = make_net(X.shape[1])
-    opt = torch.optim.Adam(net.parameters(), lr=1e-3, weight_decay=1e-4)
-    # P(real) = sigmoid(-energy)  ->  logit for "real" = -energy. Balance the classes.
-    pos_weight = torch.tensor([n_neg / max(1, n_pos)], dtype=torch.float32)
-    lossf = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-    for epoch in range(400):
-        opt.zero_grad()
-        energy = net(Xt)
-        loss = lossf(-energy, yt)                                      # low energy for real
-        if not torch.isfinite(loss):
-            log(f"epoch {epoch} non-finite — stopping"); break
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
-        opt.step()
-        if epoch % 100 == 0:
-            with torch.no_grad():
-                p = torch.sigmoid(-energy)
-                acc = (((p > 0.5).float() == yt).float().mean().item())
-            log(f"epoch {epoch} loss {loss.item():.4f} acc {acc:.2f}")
+    y = np.asarray(labels, dtype="float32")
+
+    # --- held-out eval: the honest generalization number (not training-set memorization) ---
+    idx = list(range(len(texts))); random.Random(0).shuffle(idx)
+    cut = max(2, int(len(idx) * 0.25))
+    te, tr = idx[:cut], idx[cut:]
+    tr_pos, tr_neg = int(y[tr].sum()), len(tr) - int(y[tr].sum())
+    if tr_pos and tr_neg and int(y[te].sum()) and (len(te) - int(y[te].sum())):
+        net_s = _fit(torch.tensor(X[tr]), torch.tensor(y[tr]).view(-1, 1), X.shape[1], tr_pos, tr_neg)
+        with torch.no_grad():
+            p_te = torch.sigmoid(-net_s(torch.tensor(X[te]))).view(-1).numpy()
+        pred = (p_te >= 0.5).astype("float32")
+        acc = float((pred == y[te]).mean())
+        # per-class held-out recall (does it catch imagined AND keep real?)
+        real_rec = float((pred[y[te] == 1] == 1).mean()) if (y[te] == 1).any() else float("nan")
+        imag_rec = float((pred[y[te] == 0] == 0).mean()) if (y[te] == 0).any() else float("nan")
+        log(f"HELD-OUT ({len(te)} items): acc {acc:.2f} | real-recall {real_rec:.2f} | imagined-recall {imag_rec:.2f}")
+    else:
+        log("held-out split too small/imbalanced to evaluate — training on all")
+
+    # final model on ALL data
+    net = _fit(torch.tensor(X), torch.tensor(y).view(-1, 1), X.shape[1], n_pos, n_neg)
     torch.save({"state": net.state_dict(), "dim": X.shape[1]}, MODEL)
     log(f"saved {MODEL}")
 
