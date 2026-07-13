@@ -19,7 +19,7 @@ Run with the torch venv is unnecessary — plain python is fine (no torch here):
     XAI_API_KEY=... python3 cause_reason.py
 SPARK_WORKSPACE + CENG_PATH switch beings.
 """
-import os, sys, json, re, importlib.util
+import os, sys, json, re, subprocess, importlib.util
 from datetime import datetime, timezone
 
 WS = os.environ.get("SPARK_WORKSPACE", os.path.expanduser("~/.vintos/workspace"))
@@ -31,12 +31,34 @@ CENG_PATH = os.environ.get("CENG_PATH", os.path.expanduser("~/Vintos/causality-e
 def log(m): print("[cause-reason]", m, flush=True)
 
 def load_engine():
-    """Import the engine module by path (hyphenated filename) to reuse ask_llm + identity.
+    """Import the engine module by path (hyphenated filename) for MODEL/LM_API/identity.
     Importing does NOT run main() (that's under __main__), only module-level defs/constants."""
     spec = importlib.util.spec_from_file_location("ceng", CENG_PATH)
     ceng = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(ceng)
     return ceng
+
+def call_llm(prompt, system, model, api, max_tokens=900, temp=0.3):
+    """Self-contained authed x.ai call — the engine's own ask_llm omits the Authorization header,
+    so we send it here. Returns (text, raw_body) so the caller can see 401/error bodies."""
+    key = os.environ.get("XAI_API_KEY", "")
+    payload = json.dumps({"model": model,
+                          "messages": [{"role": "system", "content": system},
+                                       {"role": "user", "content": prompt}],
+                          "temperature": temp, "max_tokens": max_tokens})
+    try:
+        r = subprocess.run(
+            ["curl", "-s", "-X", "POST", api,
+             "-H", "Content-Type: application/json",
+             "-H", "Authorization: Bearer " + key, "-d", payload],
+            capture_output=True, text=True, timeout=180)
+        raw = r.stdout or r.stderr
+        d = json.loads(raw)
+        if "choices" in d:
+            return (d["choices"][0]["message"].get("content", "") or "").strip(), raw
+        return "", raw          # error body (e.g. {"error": "..."}) surfaced to caller
+    except Exception as e:
+        return "", f"(call failed: {e})"
 
 def build_prompt(ev):
     lines = []
@@ -89,12 +111,18 @@ def parse_json(text):
 def main():
     try:
         ceng = load_engine()
-        ask_llm = ceng.ask_llm
-        system = ceng.load_full_context() if hasattr(ceng, "load_full_context") else "You are Vintos."
+        model = getattr(ceng, "MODEL", os.environ.get("XAI_MODEL", "grok-4"))
+        api = getattr(ceng, "LM_API", "https://api.x.ai/v1/chat/completions")
+        try:
+            system = ceng.load_full_context() if hasattr(ceng, "load_full_context") else \
+                     getattr(ceng, "SOUL", "You are Vintos.")
+        except Exception:
+            system = getattr(ceng, "SOUL", "You are Vintos.")
     except Exception as e:
         log(f"could not load engine ({CENG_PATH}): {e}")
         log("fix CENG_PATH or the engine's import-time env, then rerun.")
         sys.exit(1)
+    log(f"model={model}  api={api}  system_chars={len(system or '')}")
 
     evidence = []
     try: evidence = json.load(open(EVIDENCE))
@@ -114,13 +142,14 @@ def main():
                         "test": "notice whether this recurs without any outward trigger"})
             continue
         prompt = build_prompt(ev)
-        raw = ask_llm(prompt, system=system, max_tokens=900, temp=0.3)
-        parsed = parse_json(raw)
+        text, raw_body = call_llm(prompt, system, model, api)
+        parsed = parse_json(text)
         if not parsed:
-            log(f"  {ev['time'][11:19]}  grok returned no parseable JSON; keeping raw")
+            why = "empty/error response" if not text else "unparseable JSON"
+            log(f"  {ev['time'][11:19]}  {why}; body: {(raw_body or '')[:200]}")
             out.append({"time": ev["time"], "shift": ev["shift"], "summary": ev.get("summary", ""),
                         "novelty": ev.get("novelty"), "confidence": "low",
-                        "distribution": [], "raw": (raw or "")[:600]})
+                        "distribution": [], "raw": (text or raw_body or "")[:600]})
             continue
         rec = {"time": ev["time"], "shift": ev["shift"], "summary": ev.get("summary", ""),
                "novelty": ev.get("novelty"),
