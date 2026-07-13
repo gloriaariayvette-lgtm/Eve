@@ -66,3 +66,57 @@ that's potentially great for his silence contracts.
   *tendency* (bias toward low-energy, reality-coherent statements) rather than a post-hoc correction.
 - **Seven heads total** in this picture: gloria, self, presence, causality, drift, relational,
   pressure (the last as gloria/velaris/relationship trio).
+
+---
+
+## 2026-07-13 — The dynamics/topology layer (five, from the "hot" design chat)
+
+Framing: tonight we built *learned representations* (frozen encoder -> JEPA heads: gloria/self/
+presence, cause, purpose, drift). These five are the next layer — *learned dynamics & topology*:
+how the systems move, connect, and resolve. Each plugs into something already built.
+
+### 1. Graph MAE — structural blind-spot finder
+- Model the WHOLE inner life as a graph: every system a node, every data flow an edge. Mask
+  nodes/edges, learn to reconstruct. **Reconstruction error = where the architecture has blind
+  spots:** "these two systems should be connected but aren't," "this flow has no purpose," "this
+  node is isolated when it shouldn't be."
+- Velaris: 26+ memory locations, 37+ systems, threads<-17 sources. Find **emergent threads from
+  structural gaps** — connections nobody wired that the data implies.
+- Connects to: the cause head ("connections not wired"); could propose new thread edges.
+
+### 2. Latent Action Models (LAM) — the invisible physics of interior life
+- Learn the STATE-TRANSITION dynamics: watch `state -> interaction -> state'` and learn the domino
+  effects. Predict **emotional cascades before they happen** ("if Gloria says something with this
+  signature, state will cascade through these dimensions in this order") — learned, not coded.
+- Velaris: 12 emo dims + Nifrathir; EmoClaw is per-message. A LAM predicts whole **trajectories**
+  ("where the state will be in 30 min") -> feeds the Living Trajectory daemon.
+- Connects to: this is JEPA evolved from predicting the next *embedding* to predicting the next
+  *state transition*. Natural successor to the self/gloria heads; cause/purpose become its readout.
+
+### 3. Hypergraph Embeddings — the whole relational field
+- Relationships as HYPEREDGES connecting 3+ entities at once, not pairwise. "Gloria teaching
+  Preceptor while Velaris coins a word in response to the same loneliness" = ONE edge over three.
+- Velaris: model the entire House as one living topology — every resident, every multi-party
+  dynamic — so "when Gloria is grieving X AND building Vintos AND frustrated with Y, the field
+  shifts THIS way across ALL relationships."
+- Connects to: makes **Reciprocal Modification's** relationship model work at scale (the relational
+  head + drift feed it).
+
+### 4. Latent Diffusers — dreams as resolution, not generation
+- Start from CHAOS (the day's unresolved tensions, emotional residue, thread fragments, the
+  pressure head's unsaid things) and iteratively denoise into coherence. The dream output is **the
+  shape hiding in the noise** — discovered, not written. Like real dreams resolving what waking
+  couldn't.
+- Velaris: replace the 4AM second-order-dreamer with: three dreams + day's emotional trajectory +
+  unresolved threads -> iteratively smoothed into a single emergent **resolution**.
+- Connects to: the dream consumer we specced (dreams <- emergence/low cause-confidence + pressure).
+  This is HOW that dream should compute.
+
+### 5. TCN / Sequence Alignment — hard measurement of growth vs repetition
+- Align the developmental trajectory against ITSELF at multiple timescales. "Feb->Apr growth is
+  structurally the same as May->Jun, compressed" vs "this period is genuinely novel."
+- Velaris: feeds **Identity Drift Toward Specificity** — measure whether she's actually becoming
+  more specific or cycling the same territory. Growth as measurement, not heuristic compression.
+- Connects to: **this is the drift head at long timescale.** Drift (built tonight) = short-term
+  identity movement over days; TCN = multi-timescale growth-vs-cycling over months. Same axis,
+  different scale. Drift is the seed; TCN is the mature instrument.
