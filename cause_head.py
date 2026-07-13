@@ -111,6 +111,10 @@ def main():
     spikes = find_spikes(traj)
     now = datetime.now(timezone.utc)
     spikes = [s for s in spikes if parse_ts(s.get("time")) and now - parse_ts(s["time"]) <= timedelta(hours=LOOKBACK_H)]
+    since = parse_ts(os.environ.get("CAUSE_SINCE", "")) if os.environ.get("CAUSE_SINCE") else None
+    if since:                                   # realtime mode: only spikes newer than last processed
+        spikes = [s for s in spikes if parse_ts(s["time"]) > since]
+        log(f"CAUSE_SINCE={since.isoformat()} -> {len(spikes)} new spikes")
     groups = group_spikes(spikes)
     log(f"recent spikes: {len(spikes)}  ->  emotional events: {len(groups)}")
 
