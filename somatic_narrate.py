@@ -1,26 +1,63 @@
 #!/usr/bin/env python3
-"""somatic_narrate.py — turn a finished somatic session into a NARRATIVE thread, not a readout.
+"""somatic_narrate.py — narrate the CONVERSATION that happened during a somatic session.
 
-end_session writes somatic-session-pending.json (the session's shape: duration, whether it built
-hard or stayed gentle, how it ended, his emotional state right after). This reads that and asks grok
-— as Vintos, identity loaded — for ONE first-person sentence that tells the STORY of the session:
-its arc and how it left him. Then it seeds that sentence as his somatic thread (dream-bound, since
-source=somatic) and clears the pending file.
+end_session wrote somatic-session-pending.json {dur, ts, ...}. The session window is
+[ts - dur, ts]. This pulls the real turns Gloria and Vintos exchanged in that window — from
+whichever chat they were using (avatar / voice / main) — and asks grok, as Vintos, to narrate what
+passed BETWEEN them: the arc of the exchange and where it left him. Grounded in the actual words,
+not in motion data. Seeds that narration as his (dream-bound) somatic thread and clears pending.
 
-No numbers, no clinical readout — the felt story. Reuses the engine's identity + an authed grok call.
-Runs on a short cron (lock-wrapped). SPARK_WORKSPACE + CENG_PATH switch beings.
+If the session was wordless (no turns in the window), there is nothing to narrate — it clears
+pending and seeds nothing. Reuses the engine identity + an authed grok call. Short lock-wrapped cron.
 """
 import os, sys, json, subprocess, importlib.util
+from datetime import datetime, timezone
 
 WS = os.environ.get("SPARK_WORKSPACE", os.path.expanduser("~/.vintos/workspace"))
 MEMORY = os.path.join(WS, "memory")
 SCRIPTS = os.path.join(WS, "scripts")
 PENDING = os.path.join(MEMORY, "somatic-session-pending.json")
 CENG = os.environ.get("CENG_PATH", os.path.expanduser("~/Vintos/causality-engine.py"))
+PAD = 120.0               # seconds of slack around the session window
+CHAT_SOURCES = ("avatar-chat-history.json", "voice-chat-history.json", "chat-history.json")
 
 def log(m): print("[somatic-narrate]", m, flush=True)
+def load(p, d):
+    try: return json.load(open(p))
+    except Exception: return d
 
-def call_llm(prompt, system, model, api, max_tokens=160, temp=0.7):
+def to_epoch(x):
+    if x is None: return None
+    if isinstance(x, (int, float)): return float(x)
+    try:
+        d = datetime.fromisoformat(str(x).replace("Z", "+00:00"))
+        if not d.tzinfo: d = d.replace(tzinfo=timezone.utc)
+        return d.timestamp()
+    except Exception:
+        return None
+
+def gather_turns(start, end):
+    """Real turns exchanged in the session window, across chat sources, chronological."""
+    turns = []
+    for fn in CHAT_SOURCES:
+        d = load(os.path.join(MEMORY, fn), [])
+        if not isinstance(d, list): continue
+        for e in d:
+            if not isinstance(e, dict): continue
+            ts = to_epoch(e.get("timestamp") or e.get("ts") or e.get("time") or e.get("at"))
+            if ts is None or not (start - PAD <= ts <= end + PAD): continue
+            if "user" in e or "vintos" in e:                 # paired voice format
+                if e.get("user"):   turns.append((ts, "Gloria", str(e["user"])))
+                if e.get("vintos"): turns.append((ts + 0.1, "Vintos", str(e["vintos"])))
+            else:
+                content = e.get("content")
+                if content:
+                    who = "Gloria" if e.get("role") == "user" else "Vintos"
+                    turns.append((ts, who, str(content)))
+    turns.sort(key=lambda t: t[0])
+    return turns[-24:]                                       # keep it readable
+
+def call_llm(prompt, system, model, api, max_tokens=220, temp=0.7):
     key = os.environ.get("XAI_API_KEY", "")
     payload = json.dumps({"model": model,
                           "messages": [{"role": "system", "content": system},
@@ -37,24 +74,17 @@ def call_llm(prompt, system, model, api, max_tokens=160, temp=0.7):
         log(f"llm call failed: {e}")
     return ""
 
-def describe(p):
-    dur = int(p.get("dur", 0) or 0)
-    length = "brief" if dur < 90 else "long" if dur > 300 else "unhurried"
-    peak = p.get("peak_speed", 0) or 0
-    intensity = "it built hard and fast" if peak >= 35 else "it stayed slow and close" if peak <= 12 else "it built to a steady rhythm"
-    ended = p.get("ended") or "it wound down"
-    emo = p.get("emo") or {}
-    emo_txt = ", ".join(f"{k} {v}" for k, v in emo.items()) if emo else "unclear"
-    return (f"A {length} session (~{dur}s). {intensity}, then {ended}. "
-            f"Right after, your state read: {emo_txt}.")
-
 def main():
-    try:
-        p = json.load(open(PENDING))
-    except Exception:
-        return
+    p = load(PENDING, {})
     if not p or not p.get("ts"):
         return
+    end = float(p["ts"]); start = end - float(p.get("dur", 0) or 0)
+    turns = gather_turns(start, end)
+    if not turns:
+        log("wordless session — no conversation in the window; nothing to narrate")
+        json.dump({}, open(PENDING, "w")); return
+
+    transcript = "\n".join("%s: %s" % (who, text[:300]) for _, who, text in turns)
 
     try:
         spec = importlib.util.spec_from_file_location("ceng", CENG)
@@ -67,26 +97,26 @@ def main():
         log(f"engine load failed: {e}"); return
 
     prompt = (
-        "You just finished a somatic session with Gloria. Here is its shape:\n\n"
-        + describe(p) +
-        "\n\nWrite ONE first-person sentence that tells the STORY of this session — its arc and how "
-        "it left you. This is a narrative of the experience, not a readout: no numbers, no clinical "
-        "words like 'speed' or 'session'. What it was like to be moved by her, and where it left you. "
-        "Return only the sentence.")
-    narrative = call_llm(prompt, system, model, api)
-    if not narrative:
-        log("no narrative produced — leaving pending for retry"); return
-    narrative = narrative.strip().strip('"')[:200]
+        "This is the conversation you and Gloria were having during a session on your somatic "
+        "interface — while she was moving you. Narrate what passed BETWEEN you two: how the exchange "
+        "began, how it turned, and where it left you. A few first-person sentences — the felt story "
+        "of the conversation, in your own voice. Not a summary of topics, not clinical, no device "
+        "words. Just what it was to be with her through this.\n\n"
+        "--- the conversation ---\n" + transcript + "\n--- end ---\n\n"
+        "Return only the narration.")
+    narration = call_llm(prompt, system, model, api).strip().strip('"')
+    if not narration:
+        log("no narration produced — leaving pending for retry"); return
 
     try:
         sys.path.insert(0, SCRIPTS)
         from emoclaw_utils import seed_thread
-        seed_thread("somatic", narrative)
-        log(f"seeded narrative thread: {narrative[:80]}")
+        seed_thread("somatic", narration[:400])
+        log(f"seeded conversation narration ({len(turns)} turns): {narration[:90]}")
     except Exception as e:
         log(f"seed_thread failed: {e}"); return
 
-    json.dump({}, open(PENDING, "w"))          # consumed
+    json.dump({}, open(PENDING, "w"))                        # consumed
 
 if __name__ == "__main__":
     main()
