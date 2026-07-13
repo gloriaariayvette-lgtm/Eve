@@ -15,36 +15,23 @@ The unchanging basics for working on Vintos, so we stop relearning them every se
 
 ## Restarts (Claude drives these — don't make Gloria do it)
 
-### Vintos web server — VALIDATED
-`start-vintos.sh` writes `/tmp/vintos-server.pid`, but that file **goes stale**, so `kill $(cat …)`
-often misses and the new process can't bind 8500. **Kill by who holds the port**, wait for release,
-then launch:
+### Vintos web server + somatic_bridge — now systemd `--user` services (SELF-HEALING)
+Both are `--user` services (`Restart=always`), installed by `install_vintos_systemd.sh`. A crash,
+breaker, or reboot brings them back on their own — like `velaris-server`. **This is the restart now:**
 ```bash
-PID=$(ss -ltnp 2>/dev/null | grep ':8500' | grep -oP 'pid=\K[0-9]+' | head -1)
-[ -n "$PID" ] && kill "$PID"
-for i in $(seq 1 12); do ss -ltn 2>/dev/null | grep -q ':8500' || break; sleep 1; done
-cd ~/Vintos && PYTHONPATH=~/.vintos/workspace/scripts:$PYTHONPATH nohup python3 server.py >> ~/.vintos/logs/server.log 2>&1 &
-echo $! > /tmp/vintos-server.pid
-for i in $(seq 1 15); do ss -ltn 2>/dev/null | grep -q ':8500' && { echo "LISTENING ✓"; break; }; sleep 1; done
-tail -4 ~/.vintos/logs/server.log   # want "Application startup complete", no "address already in use"
+systemctl --user restart vintos-server            # after patching server.py / request-time scripts
+systemctl --user restart vintos-somatic-bridge    # after patching somatic_bridge.py
+systemctl --user status  vintos-server --no-pager  | head -6
+journalctl --user -u vintos-server -n 30           # logs (replaces ~/.vintos/logs/server.log tail)
 ```
-Restart the server to load any patch to `~/Vintos/server.py` or `~/.vintos/workspace/scripts/*`
-imported at request time.
-Full launcher `bash ~/Vintos/start-vintos.sh` also re-runs `setup_memory.sh` + starts EmoClaw —
-avoid it for a plain restart (it may re-seed).
-
-### somatic_bridge — VALIDATED
-Bare `python3 somatic_bridge.py` from the **scripts dir** (own process; not in start-vintos.sh, not
-systemd). Restart to load patches to `~/.vintos/workspace/scripts/somatic_bridge.py`:
-```bash
-pkill -f somatic_bridge.py
-cd ~/.vintos/workspace/scripts && nohup python3 somatic_bridge.py >> ~/.vintos/logs/somatic-bridge.log 2>&1 &
-sleep 2; tail -8 ~/.vintos/logs/somatic-bridge.log
-```
-- Toy = Lovense at **`192.168.1.66:20010`** (Lovense Standard API on `.66:<port>/command`).
-- `[ACT] no-contact -> silence` = healthy idle.
-- `socket lost ([Errno 111] Connect call failed …) — retrying in 5s` = **the device / Lovense app is
-  OFF**, not a bridge error. It retries and connects when the toy is powered on.
+- Server on port 8500; `vintos-server.service` has a port-free `ExecStartPre`, so no stale-pid dance.
+- **Reboot survival needs linger:** `sudo loginctl enable-linger gloria` (once). Without it, services
+  restart on crash but NOT after a full power-cycle.
+- Unit files: `~/.config/systemd/user/vintos-server.service`, `…/vintos-somatic-bridge.service`.
+- somatic toy = Lovense at **`192.168.1.66:20010`**. `[ACT] no-contact -> silence` = healthy idle;
+  `socket lost (Errno 111) — retrying` = the device/app is OFF, not a bug.
+- Do NOT `bash start-vintos.sh` for a restart (it re-runs setup_memory.sh + EmoClaw). Legacy bare
+  launch (fallback only): `cd ~/Vintos && PYTHONPATH=~/.vintos/workspace/scripts nohup python3 server.py &`.
 
 ### EmoClaw daemon
 `systemctl --user restart vintos-emoclaw`  — or `~/.vintos/workspace/skills/emoclaw/scripts/daemon.sh {start|stop|restart}`
