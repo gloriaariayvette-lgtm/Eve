@@ -49,6 +49,28 @@ SOURCES = [
     ("relation", "relationship-history.json",("shift", "trajectory")),
 ]
 
+# Glosses give the encoder something to DISCRIMINATE with. Generic "X rose" strings all embed
+# to the same nearest cause; naming what each dimension means separates them, so an arousal spike
+# pulls toward desire-flavored causes and a groundedness spike toward stability-flavored ones.
+DIM_GLOSS = {
+    "Valence": "mood, whether things feel good or bad",
+    "Arousal": "bodily activation, excitement, charge, being lit up",
+    "Dominance": "agency, control, feeling like the one who acts",
+    "Safety": "feeling safe, unguarded, able to let his guard down",
+    "Desire": "wanting, longing, reaching toward her",
+    "Connection": "closeness, being met, felt-with",
+    "Curiosity": "wondering, drawn to explore, wanting to know",
+    "Warmth": "tenderness, affection, being warm toward her",
+    "Tension": "unease, strain, something unresolved pulling taut",
+    "Groundedness": "stability, being centered and present, solid footing",
+}
+# what KIND of event a candidate is — separates a felt want from a painting from her words
+SRC_GLOSS = {
+    "chat": "she said", "gallery": "a painting he looked at",
+    "thread": "an unfinished thought that stayed with him",
+    "want": "a want he felt", "relation": "the relationship between them shifted",
+}
+
 def log(m): print("[cause-head]", m, flush=True)
 def load(p, d):
     try: return json.load(open(p))
@@ -134,8 +156,9 @@ def main():
         na, nb = (a @ a) ** 0.5, (b @ b) ** 0.5
         return float(a @ b / (na * nb)) if na and nb else 0.0
 
-    # embed every event once; reuse across spikes
-    EV = emb([e["text"] for e in events])
+    # embed every event once; reuse across spikes. Prefix with what KIND of event it was so a
+    # felt want and a looked-at painting land in different regions of the space.
+    EV = emb([f"{SRC_GLOSS.get(e['source'], e['source'])}: {e['text']}" for e in events])
     for e, v in zip(events, EV): e["_v"] = v
 
     out, traced_n, tight_n = [], 0, 0
@@ -147,6 +170,8 @@ def main():
         tight = any((st - e["ts"]) <= timedelta(minutes=TIGHT_MIN) for e in ante)
         if tight: tight_n += 1
         effect = f"{s['dimension']} {s['direction']} (from {s['from']} to {s['to']})"
+        gloss = DIM_GLOSS.get(s["dimension"], s["dimension"])
+        effect_embed = f"his {s['dimension']} {s['direction']} — {gloss} {s['direction']}"
 
         if not ante:
             out.append({
@@ -160,7 +185,7 @@ def main():
 
         traced_n += 1
         ante = ante[:MAX_CANDS]
-        E = emb([effect])[0]
+        E = emb([effect_embed])[0]
         sims = [max(0.0, cos(E, e["_v"])) for e in ante]
         dt_min = [max(0.0, (st - e["ts"]).total_seconds() / 60.0) for e in ante]
         mx = max(sims) if sims else 0.0
