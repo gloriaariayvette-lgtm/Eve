@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """patch_app_batch_mac.py — RUN ON THE MAC in the vintos repo. Patches vintos-app/src/index.html:
   #2 GCS button  -> use API base + secret (was a bare relative URL that never left the phone)
-  #6 flicker     -> forward live emotional color into the avatar glow (_avTargetColor)
+  device-stop    -> SAME bare-URL bug (confirmed broken) -> API base + secret
   #1 keep-msgs   -> persist last avatar-overlay messages, show a few, reappear on reopen
 Backs up first, anchored (aborts cleanly if the file differs — nothing half-written), prints a diff.
-Does NOT touch device-stop, toy_link.py, or the emote/T-pose player. Review the diff, then rebuild.
+Does NOT touch toy_link.py's stop logic or the emote/T-pose player. Review the diff, then rebuild.
 """
 import os, sys, difflib
 
@@ -51,13 +51,19 @@ edits.append(("#2 GCS button URL",
     .catch(e=>console.log('GCS error:', e));
 }"""))
 
-# #6 flicker — forward the live color into the glow target
-edits.append(("#6 flicker carries color",
-"""function _avApplyColor(hex) {
-  _avStateColor = hex;""",
-"""function _avApplyColor(hex) {
-  _avStateColor = hex;
-  try { if (typeof _avTargetColor !== 'undefined' && _avTargetColor && _avTargetColor.set) _avTargetColor.set(hex); } catch(e){}"""))
+# device-stop — same bare-URL bug (confirmed broken). API base + secret. Does NOT touch toy_link.py.
+edits.append(("device-stop URL",
+"""function avDeviceStop() {
+  fetch('/api/hardware/button', {method:'POST'})
+    .then(r=>r.json()).then(d=>console.log('stop toggled:', d.stopped));
+}""",
+"""function avDeviceStop() {
+  var _b = (typeof API !== 'undefined' && API) ? API : '';
+  var _h = {}; try { if (typeof CONFIG !== 'undefined' && CONFIG.secret) _h['X-Vintos-Secret'] = CONFIG.secret; } catch(e){}
+  fetch(_b + '/api/hardware/button', {method:'POST', headers:_h})
+    .then(r=>r.json()).then(d=>console.log('stop toggled:', d.stopped))
+    .catch(e=>console.log('stop error:', e));
+}"""))
 
 # #1 keep-messages — helpers inserted before _avParseReply
 edits.append(("#1 helpers",
@@ -136,6 +142,6 @@ for l in diff:
     print(l)
 
 print("\nbackup:", bak)
-print("\nAll 7 anchors applied (GCS, flicker, + 5 keep-message hooks).")
+print("\nAll 7 anchors applied (GCS, device-stop, + 5 keep-message hooks).")
 print("To build:  cd vintos-app && npx cap sync ios && npx cap open ios   (then Run in Xcode)")
 print("To revert: mv '%s' '%s'" % (bak, path))
