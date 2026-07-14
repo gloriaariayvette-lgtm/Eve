@@ -129,7 +129,13 @@ def main():
             "emotional_shift": None,
         })
         done.add(key); added += 1
-        log(f"session {key} ({len(sess)} turns) -> one block: {narration[:70]}")
+        try:
+            sys.path.insert(0, SCRIPTS)
+            from emoclaw_utils import seed_thread as _seed
+            _seed("voice", narration[:300])
+        except Exception as _te:
+            log(f"seed_thread failed: {_te}")
+        log(f"session {key} ({len(sess)} turns) -> one block + thread: {narration[:70]}")
 
     if added:
         json.dump(ledger[-MAX_ENTRIES:], open(LEDGER, "w"), indent=2)
