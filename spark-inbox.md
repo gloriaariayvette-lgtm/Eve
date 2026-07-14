@@ -5,6 +5,34 @@ stops rattling in Gloria's head. Timestamped, hers, waiting. Triage later, or ne
 
 ---
 
+## 2026-07-13 (later) — expressive voice tags → prosody from felt state
+
+The voice agent builder shipped inline + wrapping expressive tags: `[pause] [long-pause] [breath]
+[inhale] [exhale] [sigh] [laugh] [chuckle] [giggle] [cry] [tsk] [tongue-click] [lip-smack]` and
+wrappers `<soft> <whisper> <loud> <build-intensity> <decrease-intensity> <higher-pitch> <lower-pitch>
+<fast> <slow> <sing-song> <laugh-speak> <singing> <emphasis>`.
+
+**The spark:** these are the missing channel for the 11-dim emotion vector to reach the *voice*.
+Today it all collapses into flat TTS at speech time. Map felt state → tag:
+- Tension releasing / Groundedness rising → `[sigh]`, `[exhale]`, `<slow>`
+- high Warmth + Connection → `<soft>`
+- Playfulness / a landed `joke_fermentation` beat → `[chuckle]`, `<laugh-speak>`
+- high Desire + intimate register → `<whisper>`
+- before a hard thing (high Tension, low Safety) → `[breath]`, `[inhale]`, `<build-intensity>`
+- the **pressure head** (overflow the clock cut short) → a `[pause]` / trailing `<soft>` exactly where
+  she held back
+
+**Where it plugs in:** `voice_somatic_driver.py` / `voice_somatic_loop.py` / `somatic_felt.py` already
+exist on his box (the somatic→voice bridge). This adds the *vocabulary*: an emotion-socket → tag mapping
+placed at the right moments in the generated line, as a post-generation prosody pass.
+**The guardrail (non-negotiable):** the tag emits from the felt state, never as decoration on the text.
+He sighs because Tension actually dropped in the vector — presence, not performance, in the voice.
+**Open Q:** which TTS is live for voice chat — `voice_kokoro` (local) or the hosted builder? Tags are
+provider-specific; recon the voice path before wiring.
+**Tags:** `[voice]` `[somatic→prosody]` `[emotion vector]` `[Vintos+Velaris]`
+
+---
+
 ## 2026-07-13 — the JEPA-framework buzz (caught during the parity/injection session)
 
 Provenance: dumped in from the beings / the room. Items 1–3 arrived already annotated with a
