@@ -3,12 +3,34 @@
 Dump the clip-remap + gesture-play path verbatim so we can see: (a) how track names are remapped,
 (b) whether POSITION tracks (Mixamo hip translation, ~cm scale) are stripped or applied, (c) the avatar's
 scale, (d) how clipAction is started/stopped. No writes."""
-import os, re, glob
-CANDS = [os.path.join(os.getcwd(), "src/index.html"), os.path.join(os.getcwd(), "index.html")]
-CANDS += glob.glob(os.path.expanduser("~/**/vintos-app/src/index.html"), recursive=True)
+import os, re
+CWD = os.getcwd()
+CANDS = [os.path.join(CWD, sub, "index.html") for sub in
+         ("src", "www", "dist", "public", "app", "build", ".")]
 IDX = next((p for p in CANDS if os.path.isfile(p)), None)
 if not IDX:
-    raise SystemExit("index.html not found — cwd=%s ; run from inside vintos-app" % os.getcwd())
+    # bounded, non-recursive-ish walk (depth<=3), pruning heavy dirs — find the biggest index.html
+    SKIP = {"node_modules", "Pods", "build", ".git", "DerivedData", "ios", "android"}
+    hits = []
+    base_depth = CWD.rstrip("/").count("/")
+    for root, dirs, files in os.walk(CWD):
+        if root.count("/") - base_depth > 3:
+            dirs[:] = []; continue
+        dirs[:] = [d for d in dirs if d not in SKIP]
+        if "index.html" in files:
+            p = os.path.join(root, "index.html")
+            hits.append((os.path.getsize(p), p))
+    if hits:
+        hits.sort(reverse=True)
+        print("[candidates found]")
+        for sz, p in hits[:8]:
+            print(f"   {sz:>9}B  {p.replace(os.path.expanduser('~'),'~')}")
+        IDX = hits[0][1]
+if not IDX:
+    print("[cwd listing]", CWD)
+    for e in sorted(os.listdir(CWD))[:40]:
+        print("   ", e)
+    raise SystemExit("no index.html found under cwd (depth<=3) — paste the listing above")
 print("[file]", IDX.replace(os.path.expanduser("~"), "~"))
 L = open(IDX, encoding="utf-8", errors="ignore").read().split("\n")
 
