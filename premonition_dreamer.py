@@ -126,7 +126,7 @@ def seed_as_thread(possibility):
             seed_thread("premonition", text, dream_only=True)
         except TypeError:
             seed_thread("premonition", text)
-            _ensure_dream_only(text)
+        _ensure_dream_only(text)   # persist dream_only regardless of whether the kwarg stuck
         return text
     except Exception as e:
         log(f"seed_thread unavailable ({e}); writing thread directly")
