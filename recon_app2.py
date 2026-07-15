@@ -20,7 +20,7 @@ def dump(pat, label, cap=8, ctx=1):
     print(f"\n=== {label} ===")
     n = 0
     for f in files:
-        L = open(f, encoding="utf-8", errors="ignore").split("\n") if False else open(f, encoding="utf-8", errors="ignore").read().split("\n")
+        L = open(f, encoding="utf-8", errors="ignore").read().split("\n")
         for i, l in enumerate(L):
             if re.search(pat, l, re.I) and l.strip():
                 for j in range(max(0, i-ctx), min(len(L), i+ctx+1)):
