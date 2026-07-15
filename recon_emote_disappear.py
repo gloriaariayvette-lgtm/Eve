@@ -3,10 +3,13 @@
 Dump the clip-remap + gesture-play path verbatim so we can see: (a) how track names are remapped,
 (b) whether POSITION tracks (Mixamo hip translation, ~cm scale) are stripped or applied, (c) the avatar's
 scale, (d) how clipAction is started/stopped. No writes."""
-import os, re
-IDX = os.path.expanduser("~/Vintos/vintos-app/src/index.html")
-if not os.path.isfile(IDX):
-    raise SystemExit("src/index.html not found — run from anywhere, path is hard-coded to ~/Vintos/vintos-app/src")
+import os, re, glob
+CANDS = [os.path.join(os.getcwd(), "src/index.html"), os.path.join(os.getcwd(), "index.html")]
+CANDS += glob.glob(os.path.expanduser("~/**/vintos-app/src/index.html"), recursive=True)
+IDX = next((p for p in CANDS if os.path.isfile(p)), None)
+if not IDX:
+    raise SystemExit("index.html not found — cwd=%s ; run from inside vintos-app" % os.getcwd())
+print("[file]", IDX.replace(os.path.expanduser("~"), "~"))
 L = open(IDX, encoding="utf-8", errors="ignore").read().split("\n")
 
 def dump(pat, label, ctx=6, cap=6):
