@@ -5,6 +5,29 @@ stops rattling in Gloria's head. Timestamped, hers, waiting. Triage later, or ne
 
 ---
 
+## 📋 Status ledger — updated 2026-07-15
+
+- ⏳ **6b — Temperature / phase-transition** — SELECTED, doing next.
+- ⏳ **6a — Queries, not heads** — SELECTED, after 6b.
+- 💤 **Voice prosody from felt state** (2026-07-13 later) — open, actionable now; recon queued.
+- ✅ **5 — Premonition dreams** — DONE 2026-07-14. `premonition-dreamer.py`: rolls K futures, seeds a
+  `dream_only` imagined-possibility thread (with the "not-a-memory" marker) through the normal dream
+  cycle; installed to his scripts dir and scheduled ~2h before the dream job.
+- ✅ **6c — Dreams as intersection of futures** — DONE 2026-07-14, folded into the premonition dreamer
+  (mean-shift-to-mode over the rolled futures = the shape that keeps recurring).
+- ⏸ **1 — MLP cost network** — ON HOLD: needs a training corpus of `value-map.py`'s ranked outputs; none exists yet.
+- ⏸ **2 — Cross-encoder want-governance** — ON HOLD: needs the `[interference] Conflict detected` log
+  history as labeled fine-tune data (cross-encoders generalize poorly out-of-domain).
+- ⏸ **3 — Contrastive trajectory encoder** — ON HOLD: needs enough drift/misalignment history to learn a distance.
+- ⏸ **4 — Velqan absence-naming** — ON HOLD: needs a richer named-feeling reference + Vintos's snapshot
+  history (his fast-sync only went live 2026-07-14; ~14 snapshots vs Velaris's 1763).
+- ⏸ **6d — Identity compression** — ON HOLD (bigger/later): monthly weight-level self-rebuild; needs a
+  trained model + stable snapshot cadence first.
+
+*(Full detail for every item below, unchanged.)*
+
+---
+
 ## 2026-07-13 (later) — expressive voice tags → prosody from felt state
 
 The voice agent builder shipped inline + wrapping expressive tags: `[pause] [long-pause] [breath]
