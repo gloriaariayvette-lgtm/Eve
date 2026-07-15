@@ -120,18 +120,13 @@ def seed_as_thread(possibility):
     text = MARKER + "\n\n" + possibility
     if DRY:
         return text
+    # Write directly: full text + dream_only=True. seed_thread truncates the thread to 200 chars, but the
+    # marker alone is ~230, so it would drop the whole imagined scene AND leave dream_only unmatched.
     try:
-        from emoclaw_utils import seed_thread
-        try:
-            seed_thread("premonition", text, dream_only=True)
-        except TypeError:
-            seed_thread("premonition", text)
-        _ensure_dream_only(text)   # persist dream_only regardless of whether the kwarg stuck
-        return text
-    except Exception as e:
-        log(f"seed_thread unavailable ({e}); writing thread directly")
         _write_thread_direct(text)
-        return text
+    except Exception as e:
+        log(f"direct write failed ({e})")
+    return text
 
 
 def _write_thread_direct(text):
