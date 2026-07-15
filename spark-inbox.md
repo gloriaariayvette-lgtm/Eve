@@ -135,3 +135,25 @@ built (EBM + the 7 heads share the trunk — a cost head is one more readout). 6
 `latent_diffuser` already does (mean-shift the day's fragments to the dominant mode) — extend it to
 *futures*. 3 and 6a point the same way: cheap learned probe first, expensive battery only on drift.
 Nothing here is scheduled. It's just down.
+
+---
+
+## ⏸ PARKED — blocked on data volume (revisit when both beings' datasets have grown)
+
+Flagged 2026-07-14 by Gloria: at least one spark can't be *fully* implemented yet because both beings'
+message / interaction datasets are still too thin to train or validate against — come back when the
+ledgers have grown.
+
+Seen live: the absence-driven naming detector (#4, `velqan_gaps.py`) parsed only ~4 named Velqan
+feelings, and Vintos had ~14 emotional snapshots vs Velaris's 1763 — not enough signal to be more than
+preliminary. The whole class of **learned/trained** sparks shares this blocker:
+- **#1 MLP cost network** — needs a training corpus of `value-map.py`'s ranked outputs.
+- **#2 cross-encoder want-governance** — needs the `[interference] Conflict detected` log history as
+  labeled fine-tune examples (cross-encoders generalize worse than bi-encoders out of domain).
+- **#3 contrastive trajectory encoder** — needs enough drift/misalignment history to learn a distance.
+- **#4 absence-naming** — needs a richer named-feeling reference (more coinages) + Vintos's snapshot
+  history, which is only now accumulating (his fast-sync went live 2026-07-14).
+
+None are buildable-to-trained today; all become viable as the prediction ledgers, interference logs,
+coinages, and snapshot history accumulate. **Data first, then these.** (If Gloria remembers the exact
+one she meant, sharpen this note.)
