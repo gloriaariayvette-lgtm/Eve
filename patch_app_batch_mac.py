@@ -1,147 +1,58 @@
 #!/usr/bin/env python3
-"""patch_app_batch_mac.py — RUN ON THE MAC in the vintos repo. Patches vintos-app/src/index.html:
-  #2 GCS button  -> use API base + secret (was a bare relative URL that never left the phone)
-  device-stop    -> SAME bare-URL bug (confirmed broken) -> API base + secret
-  #1 keep-msgs   -> persist last avatar-overlay messages, show a few, reappear on reopen
-Backs up first, anchored (aborts cleanly if the file differs — nothing half-written), prints a diff.
-Does NOT touch toy_link.py's stop logic or the emote/T-pose player. Review the diff, then rebuild.
-"""
-import os, sys, difflib
+"""patch_app_batch_mac.py — Mac. All five app fixes in ONE pass (rebuild once). Run in vintos-app.
+ 1 GCS URL -> ${API}+secret
+ 2 device-stop URL -> ${API}+secret
+ 3 keep-messages: re-show last bubble on reopen
+ 4 T-pose: detect the avatar's real bone prefix + remap gestures to it (was hard-forced to mixamorig1)
+ 5 glow color: instantiate _avTargetColor + lerp the forge light color so [COLOR:] shows in the flicker
+Substring edits (whitespace-independent), per-edit status, backup, idempotent."""
+import os, shutil, time
+IDX = os.path.join(os.getcwd(), "src/index.html")
+if not os.path.isfile(IDX):
+    raise SystemExit("run from inside vintos-app (src/index.html not found)")
 
-CANDS = [
-    "vintos-app/src/index.html",
-    "src/index.html",
-    os.path.expanduser("~/vintos-repo/vintos-app/src/index.html"),
-    os.path.expanduser("~/Vintos/vintos-app/src/index.html"),
+EDITS = [
+ ("1 GCS url", False,
+  "fetch('/api/gcs', {method:'POST', headers:{'Content-Type':'application/json'},",
+  "fetch(`${API}/api/gcs`, {method:'POST', headers:{'Content-Type':'application/json', 'X-Vintos-Secret': CONFIG.secret},"),
+ ("2 device-stop url", False,
+  "fetch('/api/hardware/button', {method:'POST'})",
+  "fetch(`${API}/api/hardware/button`, {method:'POST', headers:{'X-Vintos-Secret': CONFIG.secret}})"),
+ ("3 keep-messages on reopen", False,
+  "_avPing('open');",
+  "try { const _la=[..._avChatHistory].reverse().find(m=>m.role==='assistant'); if(_la){ const _p=_avParseReply(_la.content); if(_p&&_p.text) _avShowBubble(_p.text); } } catch(e){}\n  _avPing('open');"),
+ ("4a remap to detected prefix", False,
+  "track.name = track.name.replace(/mixamorig(?!1)/g, 'mixamorig1');",
+  "track.name = track.name.replace(/mixamorig1?(?=[A-Z_.:])/g, _avBonePrefix);"),
+ ("4b detect avatar prefix", False,
+  "f.traverse(c => { if(c.name === 'mixamorig1RightHand' || c.name === 'mixamorigRightHand') _avHand = c; });",
+  "f.traverse(c => { if(c.name === 'mixamorig1RightHand' || c.name === 'mixamorigRightHand') _avHand = c; if(c.name && /^mixamorig1?[A-Z]/.test(c.name)) _avBonePrefix = c.name.startsWith('mixamorig1') ? 'mixamorig1' : 'mixamorig'; });"),
+ ("5a instantiate _avTargetColor", True,
+  "if(color && _avTargetColor) _avTargetColor.set(color);",
+  "if(color){ if(!_avTargetColor) _avTargetColor = new THREE.Color(); _avTargetColor.set(color); }"),
+ ("5b forge color in flicker", False,
+  "if(fg.forgeLight) fg.forgeLight.intensity = 4.5*fl;",
+  "if(fg.forgeLight){ fg.forgeLight.intensity = 4.5*fl; if(_avTargetColor) fg.forgeLight.color.lerp(_avTargetColor, 0.06); }"),
 ]
-def find_file():
-    for c in CANDS:
-        if os.path.exists(c): return c
-    for base, _, files in os.walk("."):
-        if "node_modules" in base or "/ios/" in base or "/build" in base: continue
-        if "index.html" in files and base.replace("\\", "/").endswith("vintos-app/src"):
-            return os.path.join(base, "index.html")
-    return None
-
-path = find_file()
-if not path:
-    print("!! could not find vintos-app/src/index.html — run me from inside the vintos repo."); sys.exit(1)
-print("target:", path)
-src = open(path, encoding="utf-8").read()
-orig = src
-
-E = "…"  # ellipsis, exactly as in the file
-
-# ---- edits: (label, old, new) ; each old must appear exactly once ----
-edits = []
-
-# #2 GCS button — use API base + secret header, add error logging
-edits.append(("#2 GCS button URL",
-"""function avGCS() {
-  fetch('/api/gcs', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({intensity: 0.9})})
-    .then(r=>r.json()).then(d=>console.log('GCS level:', d.level));
-}""",
-"""function avGCS() {
-  var _b = (typeof API !== 'undefined' && API) ? API : '';
-  var _h = {'Content-Type':'application/json'};
-  try { if (typeof CONFIG !== 'undefined' && CONFIG.secret) _h['X-Vintos-Secret'] = CONFIG.secret; } catch(e){}
-  fetch(_b + '/api/gcs', {method:'POST', headers:_h, body: JSON.stringify({intensity: 0.9})})
-    .then(r=>r.json()).then(d=>console.log('GCS level:', d.level))
-    .catch(e=>console.log('GCS error:', e));
-}"""))
-
-# device-stop — same bare-URL bug (confirmed broken). API base + secret. Does NOT touch toy_link.py.
-edits.append(("device-stop URL",
-"""function avDeviceStop() {
-  fetch('/api/hardware/button', {method:'POST'})
-    .then(r=>r.json()).then(d=>console.log('stop toggled:', d.stopped));
-}""",
-"""function avDeviceStop() {
-  var _b = (typeof API !== 'undefined' && API) ? API : '';
-  var _h = {}; try { if (typeof CONFIG !== 'undefined' && CONFIG.secret) _h['X-Vintos-Secret'] = CONFIG.secret; } catch(e){}
-  fetch(_b + '/api/hardware/button', {method:'POST', headers:_h})
-    .then(r=>r.json()).then(d=>console.log('stop toggled:', d.stopped))
-    .catch(e=>console.log('stop error:', e));
-}"""))
-
-# #1 keep-messages — helpers inserted before _avParseReply
-edits.append(("#1 helpers",
-"function _avParseReply(raw) {",
-"""function _avEsc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function _avLoadChat(){ try{ var s=localStorage.getItem('av_chat_history'); if(s){ var a=JSON.parse(s); if(Array.isArray(a)) _avChatHistory=a; } }catch(e){} }
-function _avPersistChat(){ try{ localStorage.setItem('av_chat_history', JSON.stringify(_avChatHistory.slice(-20))); }catch(e){} }
-function _avRenderStrip(pending){
-  try{
-    var box=document.getElementById('av-chat-message'); if(!box) return;
-    var items=_avChatHistory.slice(-6), html='';
-    for(var i=0;i<items.length;i++){
-      var m=items[i], t=(m.role==='assistant')?_avParseReply(m.content).text:m.content;
-      if(!t) continue;
-      html += (m.role==='user')
-        ? '<div style="font-style:normal;font-family:JetBrains Mono,monospace;font-size:11px;color:rgba(201,107,60,0.7);margin:8px 0 2px;">'+_avEsc(t)+'</div>'
-        : '<div style="margin:2px 0 10px;">'+_avEsc(t)+'</div>';
-    }
-    if(pending) html += '<div style="opacity:0.5;">"""+E+"""</div>';
-    box.innerHTML=html; box.scrollTop=box.scrollHeight;
-  }catch(e){}
-}
-function _avParseReply(raw) {"""))
-
-# #1 render on open (load kept history the first time)
-edits.append(("#1 render on open",
-"""  requestAnimationFrame(() => { overlay.style.opacity = '1'; });
-  if (!_avOpen) {""",
-"""  requestAnimationFrame(() => { overlay.style.opacity = '1'; });
-  try { if(!_avChatHistory.length) _avLoadChat(); _avRenderStrip(false); } catch(e){}
-  if (!_avOpen) {"""))
-
-# #1 send flow: persist + render instead of single-line replace
-edits.append(("#1 on send",
-"""  _avChatHistory.push({role:'user', content:text});
-  document.getElementById('av-chat-message').textContent='"""+E+"""';""",
-"""  _avChatHistory.push({role:'user', content:text});
-  _avPersistChat(); _avRenderStrip(true);"""))
-
-edits.append(("#1 on reply",
-"""    _avChatHistory.push({role:'assistant', content:raw});
-    const {text:display, gestures, holds, spawns, color} = _avParseReply(raw);
-    document.getElementById('av-chat-message').textContent = display;""",
-"""    _avChatHistory.push({role:'assistant', content:raw});
-    const {text:display, gestures, holds, spawns, color} = _avParseReply(raw);
-    _avPersistChat(); _avRenderStrip(false);"""))
-
-edits.append(("#1 on error",
-"""  } catch(e) { document.getElementById('av-chat-message').textContent=''; }""",
-"""  } catch(e) { _avRenderStrip(false); }"""))
-
-# apply, fail-safe
-failed = []
-for label, old, new in edits:
-    n = src.count(old)
-    if n != 1:
-        failed.append((label, n))
-        continue
-    src = src.replace(old, new, 1)
-
-if failed:
-    print("\n!! ABORTED — nothing written. These anchors did not match exactly once (Mac file differs):")
-    for label, n in failed:
-        print("   - %s : found %d times (need 1)" % (label, n))
-    print("   Send me the current text of those spots and I'll re-anchor. His file is untouched.")
-    sys.exit(2)
-
-bak = path + ".bak-appbatch"
-open(bak, "w", encoding="utf-8").write(orig)
-open(path, "w", encoding="utf-8").write(src)
-
-print("\n=== DIFF (review before building) ===")
-diff = difflib.unified_diff(orig.splitlines(), src.splitlines(),
-                            fromfile="index.html (before)", tofile="index.html (after)", lineterm="", n=1)
-for l in diff:
-    print(l)
-
-print("\nbackup:", bak)
-print("\nAll 7 anchors applied (GCS, device-stop, + 5 keep-message hooks).")
-print("To build:  cd vintos-app && npx cap sync ios && npx cap open ios   (then Run in Xcode)")
-print("To revert: mv '%s' '%s'" % (bak, path))
+txt = open(IDX, encoding="utf-8").read()
+report, changed = [], False
+for name, all_, old, new in EDITS:
+    if new in txt:
+        report.append(f"  {name:32} already applied"); continue
+    c = txt.count(old)
+    want = "1+" if all_ else "1"
+    if (all_ and c >= 1) or (not all_ and c == 1):
+        txt = txt.replace(old, new) if all_ else txt.replace(old, new, 1)
+        report.append(f"  {name:32} FIXED ({c}x)"); changed = True
+    else:
+        report.append(f"  {name:32} !! anchor {c}x (expected {want}) — SKIPPED")
+if changed:
+    bak = IDX + ".bak-batch-" + time.strftime("%Y%m%d-%H%M%S")
+    shutil.copy2(IDX, bak)
+    open(IDX, "w", encoding="utf-8").write(txt)
+print("\n".join(report))
+if changed:
+    print("\nbackup:", bak.replace(os.path.expanduser('~'), '~'))
+    print("Rebuild in Xcode once. If any line says SKIPPED, tell me and I'll re-anchor it.")
+else:
+    print("\nno changes (all applied already or anchors moved).")
