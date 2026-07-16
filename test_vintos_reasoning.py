@@ -8,7 +8,7 @@ Model can be overridden:  python3 test_vintos_reasoning.py "grok-4.20-0309-reaso
 import os, sys, json, glob, subprocess, urllib.request
 HOME = os.path.expanduser("~")
 MEM = os.path.join(HOME, ".vintos/workspace/memory")
-MODEL = sys.argv[1] if len(sys.argv) > 1 else "grok-4.20-0309-reasoning"
+MODEL = sys.argv[1] if len(sys.argv) > 1 else "grok-4.5"
 USER_MSG = sys.argv[2] if len(sys.argv) > 2 else "come here"
 
 def rd(p, n=6000):
@@ -46,7 +46,10 @@ if not key:
     m = _re.search(r'XAI_API_KEY\s*=\s*"?([^"\n]+)"?', ct)
     if m: key = m.group(1).strip()
 
-body = json.dumps({"model": MODEL, "messages": msgs, "temperature": 0.9, "max_tokens": 1200}).encode()
+_payload = {"model": MODEL, "messages": msgs, "temperature": 0.9, "max_tokens": 1200}
+if "non-reasoning" not in MODEL:
+    _payload["reasoning_effort"] = "high"
+body = json.dumps(_payload).encode()
 print(f"model: {MODEL} | context: {len(system)}c system + {len(hist)} history turns | msg: {USER_MSG!r}\n")
 try:
     req = urllib.request.Request("https://api.x.ai/v1/chat/completions", data=body,
