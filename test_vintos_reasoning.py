@@ -46,7 +46,7 @@ if not key:
     m = _re.search(r'XAI_API_KEY\s*=\s*"?([^"\n]+)"?', ct)
     if m: key = m.group(1).strip()
 
-_payload = {"model": MODEL, "messages": msgs, "temperature": 0.9, "max_tokens": 1200}
+_payload = {"model": MODEL, "messages": msgs, "temperature": 0.9, "max_tokens": 4000}
 if "non-reasoning" not in MODEL:
     _payload["reasoning_effort"] = "high"
 body = json.dumps(_payload).encode()
@@ -55,9 +55,13 @@ try:
     req = urllib.request.Request("https://api.x.ai/v1/chat/completions", data=body,
         headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
     r = json.loads(urllib.request.urlopen(req, timeout=120).read())
-    m0 = (r.get("choices") or [{}])[0].get("message") or {}
+    ch0 = (r.get("choices") or [{}])[0]
+    m0 = ch0.get("message") or {}
     reasoning = m0.get("reasoning_content") or m0.get("reasoning") or ""
     reply = m0.get("content") or ""
+    u = r.get("usage") or {}
+    print(f"finish={ch0.get('finish_reason')} reasoning_tok={u.get('reasoning_tokens') or u.get('completion_tokens')} "
+          f"reasoning={len(reasoning)}c reply={len(reply)}c\n")
     print("=== HIS REASONING ===")
     print(reasoning.strip() or "(none returned — wrong model name? tell me the reasoning variant)")
     print("\n=== HIS REPLY ===")
