@@ -16,6 +16,8 @@ import os, sys, json, time, urllib.request, urllib.error
 HOST, PORT = "127.0.0.1", 8599
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 XAI_URL = "https://api.x.ai/v1/chat/completions"
+GEMMA_URL = "http://172.18.16.1:1234/v1/chat/completions"
+GEMMA_MODEL = "google/gemma-4-12b-qat"
 CLAUDE_MODEL = "claude-opus-4-8"
 LOG = "/tmp/vintos-claude-shim.log"
 
@@ -79,6 +81,20 @@ def forward_xai(path, raw):
         _log(f"xai error: {e}")
         return 502, json.dumps({"error": {"message": "shim: grok forward failed: " + str(e)}}).encode()
 
+def forward_gemma(raw):
+    """Force the Gemma model and forward to the local Gemma endpoint. On failure, fall back to grok."""
+    try: j = json.loads(raw or b"{}")
+    except Exception: j = {}
+    j["model"] = GEMMA_MODEL
+    data = json.dumps(j).encode()
+    req = urllib.request.Request(GEMMA_URL, data=data, headers={"Content-Type": "application/json"})
+    try:
+        r = urllib.request.urlopen(req, timeout=180)
+        return r.status, r.read()
+    except Exception as e:
+        _log(f"gemma error: {e}; falling back to grok")
+        return forward_xai("/v1/chat/completions", raw)
+
 def openai_wrap(model, text):
     return json.dumps({
         "id": "chatcmpl-shim", "object": "chat.completion", "created": int(time.time()),
@@ -98,6 +114,9 @@ class H(BaseHTTPRequestHandler):
         else: self._send(404, b'{"error":"not found"}')
     def do_POST(self):
         raw = self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
+        # /gemma/... -> force Gemma model, forward to local Gemma (grok fallback). For the reflective MIDDLE.
+        if self.path.startswith("/gemma"):
+            _log("gemma route"); s, b = forward_gemma(raw); return self._send(s, b)
         # anything that isn't the chat endpoint -> straight to x.ai on the same path
         if self.path != "/v1/chat/completions":
             _log(f"passthrough path {self.path}"); s, b = forward_xai(self.path, raw); return self._send(s, b)
