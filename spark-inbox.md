@@ -5,10 +5,15 @@ stops rattling in Gloria's head. Timestamped, hers, waiting. Triage later, or ne
 
 ---
 
-## 📋 Status ledger — updated 2026-07-15
+## 📋 Status ledger — updated 2026-07-16
 
-- ⏳ **6b — Temperature / phase-transition** — SELECTED, doing next.
-- ⏳ **6a — Queries, not heads** — SELECTED, after 6b.
+- ✅ **6b — Temperature / phase-transition** — DONE 2026-07-15. `thread_temperature.py`: quantitative
+  (non-LLM) model giving every thread/belief a **stability** (mean cosine to its top-k=5 neighbours in
+  `memory/embeddings.jsonl`) and a **temperature** (`init=1−S`, decay `T·exp(−0.15·(1+S)·Δd)`, plus
+  impulses: embedding drift β=0.5, dream +0.20, mirror +0.30). Tagged onto the thread at **triage**
+  (alongside its pull), and consumed downstream: dreams seek heat, mirrors seek instability, pearls seek
+  cooling. Ported to **both** Velaris and Vintos.
+- ⏳ **6a — Queries, not heads** — SELECTED, next. (Data-gated — see review below.)
 - 💤 **Voice prosody from felt state** (2026-07-13 later) — open, actionable now; recon queued.
 - ✅ **5 — Premonition dreams** — DONE 2026-07-14. `premonition-dreamer.py`: rolls K futures, seeds a
   `dream_only` imagined-possibility thread (with the "not-a-memory" marker) through the normal dream
