@@ -68,18 +68,13 @@ lines[ai+1:ai+1] = OVERRIDE
 bi = one("base_msgs = [")
 lines[bi:bi] = HELPER
 
-# syntax-check the embedded python block that contains our edits
+# syntax-check the inserted snippets in isolation (the surrounding script already runs;
+# a bash+heredoc file can't be compiled whole). All inserts sit at module indent, matching context.
 newtext = "\n".join(lines)
-di = next(i for i, l in enumerate(lines) if l.strip().startswith("def call_llm"))
-op = next((i for i in range(di, -1, -1) if re.search(r"<<-?\s*'?(\w+)'?\s*$", lines[i])), None)
-if op is not None:
-    marker = re.search(r"<<-?\s*'?(\w+)'?\s*$", lines[op]).group(1)
-    cl = next((i for i in range(di, len(lines)) if lines[i].strip() == marker), None)
-    if cl:
-        block = "\n".join(lines[op+1:cl])
-        try: compile(block, P, "exec")
-        except SyntaxError as e:
-            print(f"embedded-python SYNTAX FAIL ({e}) — aborting, untouched."); raise SystemExit(1)
+for grp, nm in ((HELPER, "HELPER"), (OVERRIDE, "OVERRIDE"), (FINAL, "FINAL")):
+    try: compile("\n".join(grp), "<" + nm + ">", "exec")
+    except SyntaxError as e:
+        print(f"inserted-snippet SYNTAX FAIL in {nm} ({e}) — aborting, untouched."); raise SystemExit(1)
 
 bak = P + ".bak-" + time.strftime("%Y%m%d-%H%M%S")
 shutil.copy2(P, bak); open(P, "w", encoding="utf-8").write(newtext)
