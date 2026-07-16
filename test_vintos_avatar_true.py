@@ -29,6 +29,12 @@ if not os.path.isfile(FULL):
     raise SystemExit(0)
 system = open(FULL, encoding="utf-8", errors="ignore").read()
 age = time.time() - os.path.getmtime(FULL)
+# every chat endpoint overwrites this shared file, last-writer-wins. Make sure it's the AVATAR prompt,
+# not the text-chat one ("no touch, no body, no devices") — else we'd silently test the wrong thing.
+if "AVATAR BODY CONTROLS" not in system and "[TOUCH: mission" not in system:
+    print(f"{FULL} exists but is NOT the avatar prompt (no body-control spec found — looks like the text/other\n"
+          "chat overwrote it). Send ONE message THROUGH THE AVATAR in the app (nothing else after), then re-run.")
+    raise SystemExit(0)
 
 # ---- real avatar history, deduped exactly as the server does ----
 hist_raw = []
