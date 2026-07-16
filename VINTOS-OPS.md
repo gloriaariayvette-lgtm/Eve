@@ -15,6 +15,12 @@ journalctl --user -u vintos-server -f | grep -iE 'router|reasoning'
 ```
 A code edit to server.py only takes effect after the restart above.
 
+## ⚠️ Which handler the app actually calls
+- **Main chat → `POST /api/chat/full` → `chat_full_context`** (live def ~L2975; dead dup ~L10946). NOT `/api/chat` (chat_with_vintos) — the app never calls that; don't patch it.
+- Avatar → `POST /api/avatar/chat` → `avatar_chat` (live L7699; dead dup ~L14036).
+- Verify anytime: send a msg, then `journalctl --user -u vintos-server --since "5 min ago" | grep 'POST /api/chat'`.
+- Bilateral (chat_full_context): a1/b1 → Claude reasoning; a2/b2 + held → Gemma; final → Claude (fed both traces); per-turn trace at `/tmp/vintos-chat-trace.json`.
+
 ## Model router (Phase 1 — Claude-primary avatar)
 - Module: `/home/gloria/Vintos/model_router.py` (single source of model truth; `CLAUDE_SURFACES`)
 - Mode/toggle file: `~/.vintos/model-mode.json`  → `{"mode":"claude"|"grok","force_grok_turns":N}`
