@@ -11,7 +11,7 @@ Keeps voice untouched (those scripts keep pointing at x.ai; only chat scripts ge
 Run:      python3 vintos_claude_shim.py            (serves on 127.0.0.1:8599)
 Install:  python3 vintos_claude_shim.py --install  (writes+enables systemd --user unit, starts, health-checks)
 """
-import os, sys, json, time, urllib.request
+import os, sys, json, time, urllib.request, urllib.error
 
 HOST, PORT = "127.0.0.1", 8599
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
@@ -64,10 +64,11 @@ def claude_complete(messages, max_tokens):
     text = "".join(b.get("text", "") for b in d.get("content", []) if b.get("type") == "text")
     return text or None
 
-def forward_xai(raw):
-    """Forward raw OpenAI-format bytes to real grok. Returns (status, body_bytes)."""
+def forward_xai(path, raw):
+    """Forward raw bytes to real x.ai on the SAME path (chat / images / anything). Returns (status, body_bytes)."""
     key = _xai_key()
-    req = urllib.request.Request(XAI_URL, data=raw,
+    url = "https://api.x.ai" + (path if path.startswith("/") else "/" + path)
+    req = urllib.request.Request(url, data=raw,
         headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
     try:
         r = urllib.request.urlopen(req, timeout=300)
@@ -97,19 +98,22 @@ class H(BaseHTTPRequestHandler):
         else: self._send(404, b'{"error":"not found"}')
     def do_POST(self):
         raw = self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
+        # anything that isn't the chat endpoint -> straight to x.ai on the same path
+        if self.path != "/v1/chat/completions":
+            _log(f"passthrough path {self.path}"); s, b = forward_xai(self.path, raw); return self._send(s, b)
         try:
             j = json.loads(raw or b"{}")
         except Exception:
-            s, b = forward_xai(raw); return self._send(s, b)
+            s, b = forward_xai(self.path, raw); return self._send(s, b)
         model = str(j.get("model", ""))
-        # image/video generation -> straight to grok
+        # image/video generation models -> straight to grok
         if any(t in model for t in ("imagine", "image", "video")):
-            _log(f"passthrough {model}"); s, b = forward_xai(raw); return self._send(s, b)
+            _log(f"passthrough {model}"); s, b = forward_xai(self.path, raw); return self._send(s, b)
         # text chat -> Claude, fallback grok
         text = claude_complete(j.get("messages", []), j.get("max_tokens"))
         if text:
             _log(f"claude ok ({model})"); return self._send(200, openai_wrap(model, text))
-        _log(f"fallback->grok ({model})"); s, b = forward_xai(raw); return self._send(s, b)
+        _log(f"fallback->grok ({model})"); s, b = forward_xai(self.path, raw); return self._send(s, b)
 
 UNIT = """[Unit]
 Description=Vintos Claude shim (OpenAI->Claude proxy, grok fallback)
