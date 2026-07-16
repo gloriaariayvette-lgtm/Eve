@@ -7,7 +7,10 @@ EXCLUDED (stay pointing directly at x.ai): server.py (its grok calls are the mod
 import os, glob, time, shutil, sys
 HOME = os.path.expanduser("~")
 APPLY = "--apply" in sys.argv
-EXCLUDE = {"server.py", "model_router.py", "briefing-audio.sh", "model_config.py"}
+EXCLUDE = {"server.py", "model_router.py", "briefing-audio.sh", "model_config.py",
+           "vintos_claude_shim.py",                       # the shim itself — must reach real x.ai (no self-loop)
+           "vintos-video.py", "dream-art.py", "music_share.py",  # media gen — keep hitting grok directly
+           "merged_full_route.py"}                        # chat route w/ possible fallback — avoid loop risk
 DIRS = [os.path.join(HOME, "Vintos"), os.path.join(HOME, ".vintos/workspace/scripts")]
 BK = os.path.join(HOME, ".vintos", "grok-swap-backup-" + time.strftime("%Y%m%d-%H%M%S"))
 print(("APPLY — writing (backup: " + BK.replace(HOME, "~") + ")") if APPLY else "DRY RUN — nothing written. Re-run with --apply to swap.")
