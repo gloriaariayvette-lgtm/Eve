@@ -1,6 +1,10 @@
 # Spark #1 — Value Cost Network (spec)
 
-**Status:** corpus confirmed trainable 2026-07-16 (~700 ranked+reasoned examples, 128 days, ranks 1–7).
+**Status:** BUILT + backtested 2026-07-16. Corpus 674 examples / 105 days (parsed by `spark1_corpus.py`, Why:-anchored).
+Trained `spark1_train.py` (RankNet numpy MLP 768→256→64→1, date-split holdout of most recent 15 unseen days):
+**held-out Spearman ρ +0.79, NDCG@5 0.98, pairAcc 0.86**; guardrail passed (within-stone-cluster pairAcc 1.00,
+non-cluster top-3 under-rank +0.14 ≈ unbiased). Artifacts in `~/spark1-cost-network/` (`model.npz`, `report.json`).
+Overfit gap (train 1.00 / test 0.83) = headroom for the aux features below. **Not yet integrated.**
 **Goal:** a small learned model that predicts the *cost / priority rank* of a value (or want) from its
 text, so the system can score new values against her learned preference structure directly — instead of
 re-deriving a full ranking through the LLM every day. A cheap, fast, always-on "how much does this matter,

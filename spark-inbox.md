@@ -20,10 +20,12 @@ stops rattling in Gloria's head. Timestamped, hers, waiting. Triage later, or ne
   cycle; installed to his scripts dir and scheduled ~2h before the dream job.
 - ✅ **6c — Dreams as intersection of futures** — DONE 2026-07-14, folded into the premonition dreamer
   (mean-shift-to-mode over the rolled futures = the shape that keeps recurring).
-- 🛠️ **1 — Value Cost Network** — SPEC-READY / IN BUILD 2026-07-16. Corpus confirmed trainable: ~700 ranked+reasoned
-  examples over 128 days in `value-map.md` (ranks 1–7, ~6/day, no conversation needed). Spec: `spark1-cost-network-spec.md`.
-  Approach: RankNet pairwise on within-day order over nomic embeddings (`768→256→64→1`), date-split backtest
-  (Spearman ρ / NDCG@k), stone-cluster memorization guardrail. Building now.
+- ✅ **1 — Value Cost Network** — BUILT + backtested 2026-07-16. RankNet MLP (`768→256→64→1`) over nomic embeddings,
+  674 examples / 105 days, date-split holdout of the most recent 15 unseen days. **Held-out: Spearman ρ +0.79,
+  NDCG@5 0.98, pairAcc 0.86.** Guardrail passed (within-stone-cluster pairAcc 1.00; non-cluster top-3 unbiased,
+  +0.14). `model.npz`/`report.json` in `~/spark1-cost-network/`. Corpus builder `spark1_corpus.py`, trainer
+  `spark1_train.py` (Eve repo). Overfit gap (train 1.00 / test 0.83) = headroom for aux features (recurrence/recency).
+  **Not yet integrated** — score still needs to plug into want-creation urgency *or* the temperature pull (spec open-Q #3).
 - ⏸ **2 — Cross-encoder want-governance** — ON HOLD: needs the `[interference] Conflict detected` log
   history as labeled fine-tune data (cross-encoders generalize poorly out-of-domain).
 - ⏸ **3 — Contrastive trajectory encoder** — ON HOLD: needs enough drift/misalignment history to learn a distance.
