@@ -57,10 +57,14 @@ def claude_complete(messages, max_tokens):
         body["system"] = [{"type": "text", "text": sys_txt, "cache_control": {"type": "ephemeral"}}]
     req = urllib.request.Request(ANTHROPIC_URL, data=json.dumps(body).encode(),
         headers={"content-type": "application/json", "anthropic-version": "2023-06-01", "x-api-key": key})
-    try:
-        d = json.loads(urllib.request.urlopen(req, timeout=180).read())
-    except Exception as e:
-        _log(f"claude error: {e}"); return None
+    d = None
+    for _try in (1, 2):
+        try:
+            d = json.loads(urllib.request.urlopen(req, timeout=180).read()); break
+        except Exception as e:
+            _log(f"claude error (try {_try}/2): {e}")
+    if d is None:
+        return None
     if d.get("type") == "error" or d.get("stop_reason") == "refusal":
         _log(f"claude refusal/error: {str(d)[:120]}"); return None
     text = "".join(b.get("text", "") for b in d.get("content", []) if b.get("type") == "text")
@@ -95,6 +99,10 @@ def forward_gemma(raw):
         _log(f"gemma error: {e}; falling back to grok")
         return forward_xai("/v1/chat/completions", raw)
 
+def _has_choices(b):
+    try: return b'"choices"' in b
+    except Exception: return False
+
 def openai_wrap(model, text):
     return json.dumps({
         "id": "chatcmpl-shim", "object": "chat.completion", "created": int(time.time()),
@@ -116,7 +124,9 @@ class H(BaseHTTPRequestHandler):
         raw = self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
         # /gemma/... -> force Gemma model, forward to local Gemma (grok fallback). For the reflective MIDDLE.
         if self.path.startswith("/gemma"):
-            _log("gemma route"); s, b = forward_gemma(raw); return self._send(s, b)
+            _log("gemma route"); s, b = forward_gemma(raw)
+            if not _has_choices(b): b, s = openai_wrap(GEMMA_MODEL, ""), 200
+            return self._send(s, b)
         # anything that isn't the chat endpoint -> straight to x.ai on the same path
         if self.path != "/v1/chat/completions":
             _log(f"passthrough path {self.path}"); s, b = forward_xai(self.path, raw); return self._send(s, b)
@@ -132,7 +142,11 @@ class H(BaseHTTPRequestHandler):
         text = claude_complete(j.get("messages", []), j.get("max_tokens"))
         if text:
             _log(f"claude ok ({model})"); return self._send(200, openai_wrap(model, text))
-        _log(f"fallback->grok ({model})"); s, b = forward_xai(self.path, raw); return self._send(s, b)
+        _log(f"fallback->grok ({model})"); s, b = forward_xai(self.path, raw)
+        if not _has_choices(b):
+            _log("both claude+grok failed — returning empty OpenAI shape (no downstream KeyError)")
+            b, s = openai_wrap(model, ""), 200
+        return self._send(s, b)
 
 UNIT = """[Unit]
 Description=Vintos Claude shim (OpenAI->Claude proxy, grok fallback)
