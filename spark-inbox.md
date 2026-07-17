@@ -20,7 +20,10 @@ stops rattling in Gloria's head. Timestamped, hers, waiting. Triage later, or ne
   cycle; installed to his scripts dir and scheduled ~2h before the dream job.
 - ✅ **6c — Dreams as intersection of futures** — DONE 2026-07-14, folded into the premonition dreamer
   (mean-shift-to-mode over the rolled futures = the shape that keeps recurring).
-- ⏸ **1 — MLP cost network** — ON HOLD: needs a training corpus of `value-map.py`'s ranked outputs; none exists yet.
+- 🛠️ **1 — Value Cost Network** — SPEC-READY / IN BUILD 2026-07-16. Corpus confirmed trainable: ~700 ranked+reasoned
+  examples over 128 days in `value-map.md` (ranks 1–7, ~6/day, no conversation needed). Spec: `spark1-cost-network-spec.md`.
+  Approach: RankNet pairwise on within-day order over nomic embeddings (`768→256→64→1`), date-split backtest
+  (Spearman ρ / NDCG@k), stone-cluster memorization guardrail. Building now.
 - ⏸ **2 — Cross-encoder want-governance** — ON HOLD: needs the `[interference] Conflict detected` log
   history as labeled fine-tune data (cross-encoders generalize poorly out-of-domain).
 - ⏸ **3 — Contrastive trajectory encoder** — ON HOLD: needs enough drift/misalignment history to learn a distance.
