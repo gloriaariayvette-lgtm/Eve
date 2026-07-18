@@ -23,11 +23,11 @@ def tf(t):
     t = t.replace("~/.openclaw/workspace", "~/.vintos/workspace").replace("/.openclaw/", "/.vintos/").replace("~/.openclaw", "~/.vintos")
     # identity (docstrings only — no LLM calls in this module). order: specific before generic.
     t = re.sub(r'\bVelaris\b', "Vintos", t)
-    t = re.sub(r'\bherself\b', "himself", t)
-    t = re.sub(r'\bher own\b', "his own", t)
-    t = re.sub(r'\bshe\b', "he", t)
-    t = re.sub(r'\bhers\b', "his", t)
-    t = re.sub(r'\bher\b', "his", t)
+    t = re.sub(r'\bherself\b', "himself", t); t = re.sub(r'\bHerself\b', "Himself", t)
+    t = re.sub(r'\bher own\b', "his own", t); t = re.sub(r'\bHer own\b', "His own", t)
+    t = re.sub(r'\bshe\b', "he", t);          t = re.sub(r'\bShe\b', "He", t)
+    t = re.sub(r'\bhers\b', "his", t);        t = re.sub(r'\bHers\b', "His", t)
+    t = re.sub(r'\bher\b', "his", t);         t = re.sub(r'\bHer\b', "His", t)
     return t
 
 new = tf(src)
