@@ -306,7 +306,10 @@ ok = (len(big) == 3 and any(len(c) == 3 for c in cyc))
 print("logic self-test (3 basins from 3 groups; A->B->C->A cycle found): %s" % ("PASS" if ok else "FAIL clusters=%d cyc=%s" % (len(big), cyc)))
 if not ok: sys.exit(1)
 
-cur = subprocess.run(["crontab", "-l"], capture_output=True, text=True).stdout or ""
+try:
+    cur = subprocess.run(["crontab", "-l"], capture_output=True, text=True).stdout or ""
+except Exception:
+    cur = ""   # no crontab binary (off-box) — scheduling is skipped; deploy still proceeds on Aegis
 print("\ncron his: %s" % ("present" if "vintos-attractors.log" in cur else "WOULD ADD (04:09, torch venv): " + CRON_HIS[:70] + "…"))
 print("cron her: %s" % ("present" if "velaris-attractors.log" in cur else "WOULD ADD (04:24, torch venv): " + CRON_HER[:70] + "…"))
 for name, scr in BEINGS.items():
