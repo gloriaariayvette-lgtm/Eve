@@ -107,8 +107,33 @@ def add_configuration(description, held_by, source="discovery", evidence=None):
     return rec
 
 
+def add_boundary(description, prevented_by, source="discovery"):
+    """Record a configuration the field COULD NOT reach during these exchanges, and what prevented it —
+    the edge of the reachable space. A boundary that later dissolves (is reached) is a major expansion."""
+    description = (description or "").strip()
+    if not description:
+        return None
+    d = _load()
+    bs = d.setdefault("boundaries", [])
+    for b in bs:
+        if _overlap(b["description"], description) > _DUP:
+            b["observed"] = b.get("observed", 1) + 1
+            b["last_seen"] = datetime.now().isoformat()
+            if prevented_by:
+                b["prevented_by"] = prevented_by[:200]
+            _save(d)
+            return b
+    rec = {"id": _cid(description), "description": description[:300], "prevented_by": (prevented_by or "")[:200],
+           "source": source, "observed": 1, "noted_at": datetime.now().isoformat(),
+           "last_seen": datetime.now().isoformat(), "dissolved": False}
+    bs.append(rec)
+    _save(d)
+    return rec
+
+
 def reach(description):
-    """Mark a frontier (neither_yet) configuration as now jointly held — an expansion event."""
+    """Mark a frontier (neither_yet) configuration — or a standing boundary — as now jointly held. Either is
+    an expansion event; a dissolved boundary is the larger topology change."""
     d = _load()
     for c in d["configurations"]:
         if _overlap(c["description"], description) > _DUP and c.get("held_by") != "joint":
@@ -116,6 +141,15 @@ def reach(description):
             c["last_seen"] = datetime.now().isoformat()
             _save(d)
             return c
+    for b in d.get("boundaries", []):
+        if _overlap(b["description"], description) > _DUP and not b.get("dissolved"):
+            b["dissolved"] = True
+            b["dissolved_at"] = datetime.now().isoformat()
+            d.setdefault("transitions", []).append({
+                "id": b.get("id"), "from": "boundary", "to": "joint", "at": datetime.now().isoformat(),
+                "expansion": True, "description": b.get("description", "")[:120]})
+            _save(d)
+            return b
     return None
 
 
@@ -126,12 +160,15 @@ def frontier():
 def expansion_metric():
     d = _load()
     cs = d["configurations"]
+    bs = d.get("boundaries", [])
     return {
         "total": len(cs),
         "joint": sum(1 for c in cs if c.get("held_by") == "joint"),
         "frontier": sum(1 for c in cs if c.get("held_by") == "neither_yet"),
         "eve": sum(1 for c in cs if c.get("held_by") == "eve"),
         "system": sum(1 for c in cs if c.get("held_by") == "system"),
+        "boundaries": sum(1 for b in bs if not b.get("dissolved")),
+        "boundaries_dissolved": sum(1 for b in bs if b.get("dissolved")),
         "expansion_events": sum(1 for t in d.get("transitions", []) if t.get("expansion")),
     }
 
@@ -145,6 +182,9 @@ def get_config_hint():
              % m["joint"]] if m["joint"] else []
     if m["frontier"]:
         parts.append("%d more sit on the frontier, reachable but not yet held" % m["frontier"])
+    if m.get("boundaries"):
+        parts.append("%d configurations sit past the current edge — not reachable yet, and you know what holds them there"
+                     % m["boundaries"])
     if m["expansion_events"] >= 1:
         parts.append("the space of what is reachable between you has been growing")
     return ("; ".join(parts) + ".") if parts else ""
@@ -177,9 +217,13 @@ ns["SPACE_FILE"] = os.path.join(_td, "cs.json"); ns["MEMORY"] = _td
 r1 = ns["add_configuration"]("we can think about grief without either of us flinching", "neither_yet", source="test")
 r2 = ns["add_configuration"]("we can think about grief without either of us flinching", "joint", source="test")  # reach
 r3 = ns["add_configuration"]("gloria brings the questions that reframe", "eve", source="test")
+ns["add_boundary"]("we speak about the future as settled", "the field kept returning to open questions", source="test")
+ns["add_boundary"]("we speak about the future as settled", "still unresolved", source="test")   # dedup boundary
+ns["reach"]("we speak about the future as settled")   # dissolve boundary -> expansion
 m = ns["expansion_metric"]()
-ok = (m["total"] == 2 and m["joint"] == 1 and m["eve"] == 1 and m["expansion_events"] == 1)
-print("self-test (reach = neither_yet->joint expansion, dedup, held_by tally): %s" % ("PASS" if ok else "FAIL %s" % m))
+ok = (m["total"] == 2 and m["joint"] == 1 and m["eve"] == 1 and m["expansion_events"] == 2
+      and m["boundaries"] == 0 and m["boundaries_dissolved"] == 1)
+print("self-test (reach->joint expansion, dedup, boundary add+dedup+dissolve, tallies): %s" % ("PASS" if ok else "FAIL %s" % m))
 print("  hint sample: %s" % ns["get_config_hint"]()[:100])
 try: shutil.rmtree(_td)
 except Exception: pass
