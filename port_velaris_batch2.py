@@ -91,17 +91,17 @@ if sc_new:
     dst = HER + "/social_calibration.py"
     if os.path.isfile(dst): shutil.copy2(dst, dst + ".bak-" + ts)
     open(dst, "w", encoding="utf-8").write(sc_new); print("wrote %s" % dst)
-if da_new:
+if sub_new:
+    shutil.copy2(SUBCON, SUBCON + ".bak-" + ts); open(SUBCON, "w", encoding="utf-8").write(sub_new); print("wired %s" % SUBCON)
+# dream-architecture: skip entirely if she already generates reverie (redundant capability)
+if da_new and not dream_dup and not her_has_dream_poetry_cron:
     dst = HER + "/dream-architecture.sh"
     if os.path.isfile(dst): shutil.copy2(dst, dst + ".bak-" + ts)
     open(dst, "w", encoding="utf-8").write(da_new); os.chmod(dst, 0o755); print("wrote %s" % dst)
-if sub_new:
-    shutil.copy2(SUBCON, SUBCON + ".bak-" + ts); open(SUBCON, "w", encoding="utf-8").write(sub_new); print("wired %s" % SUBCON)
-if da_new and not dream_dup and not her_has_dream_poetry_cron:
     bak = HOME + "/crontab-backup-velaris-b2-" + ts + ".txt"; open(bak, "w").write(cur)
     newc = (cur if not cur or cur.endswith("\n") else cur + "\n") + DREAM_CRON + "\n"
     p = subprocess.run(["crontab", "-"], input=newc, text=True, capture_output=True)
     print(("scheduled dream cron; backup %s" % bak) if p.returncode == 0 else ("!! cron failed: %s" % p.stderr))
 else:
-    print("dream cron NOT added (dup or review-flagged) — add manually if wanted: %s" % DREAM_CRON)
+    print("dream-architecture SKIPPED — she already generates reverie via her own dream_poetry job (not a gap).")
 print("\nDone.")
