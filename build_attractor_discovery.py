@@ -318,7 +318,7 @@ for name, scr in BEINGS.items():
 
 if not APPLY:
     print("\n(DRY-RUN — nothing written. Module compiles + passes its clustering/cycle self-test. It stays DORMANT\n"
-          " until %d+ configurations exist. --apply to deploy both + schedule nightly in the torch venv.)" % MIN_CONFIGS)
+          " until %d+ configurations exist. --apply to deploy both + schedule nightly in the torch venv.)" % ns["MIN_CONFIGS"])
     sys.exit(0)
 
 ts = time.strftime("%Y%m%d-%H%M%S")
