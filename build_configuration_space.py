@@ -168,11 +168,12 @@ try:
 except SyntaxError as e:
     print("!! module would not compile: %s — aborting" % e); sys.exit(1)
 
-# self-test the logic in-memory (no disk) so we prove the topology math before deploying
-ns = {}
-exec(compile(MODULE, "configuration_space.py", "exec"), ns)
+# self-test the logic on a temp file so we prove the topology math before deploying
 import tempfile, json as _json
-_td = tempfile.mkdtemp(); ns["SPACE_FILE"] = os.path.join(_td, "cs.json"); ns["MEMORY"] = _td
+_td = tempfile.mkdtemp()
+ns = {"__file__": os.path.join(_td, "scripts", "configuration_space.py")}  # module derives paths from __file__
+exec(compile(MODULE, "configuration_space.py", "exec"), ns)
+ns["SPACE_FILE"] = os.path.join(_td, "cs.json"); ns["MEMORY"] = _td
 r1 = ns["add_configuration"]("we can think about grief without either of us flinching", "neither_yet", source="test")
 r2 = ns["add_configuration"]("we can think about grief without either of us flinching", "joint", source="test")  # reach
 r3 = ns["add_configuration"]("gloria brings the questions that reframe", "eve", source="test")
