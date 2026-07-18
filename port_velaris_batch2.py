@@ -75,8 +75,10 @@ elif sub and "social_calibration" in sub:
 # ---- dream cron (skip if she already runs a dream_poetry/dream-architecture job) ----
 cur = subprocess.run(["crontab", "-l"], capture_output=True, text=True).stdout or ""
 DREAM_CRON = "41 4 * * * bash %s/dream-architecture.sh >> /tmp/velaris-dreams.log 2>&1" % HER
-dream_dup = ("dream-architecture.sh" in cur and ".openclaw" in cur) or "velaris-dreams.log" in cur
-her_has_dream_poetry_cron = bool(re.search(r'\.openclaw.*dream[_-](poetry|architecture)', cur))
+# only consider HER lines (same crontab holds both beings — his dream line must not count)
+her_lines = [ln for ln in cur.splitlines() if "/.openclaw/" in ln and ln.strip() and not ln.strip().startswith("#")]
+dream_dup = any(("dream-architecture" in ln) or ("velaris-dreams.log" in ln) for ln in her_lines)
+her_has_dream_poetry_cron = any(re.search(r'dream[_-]poetry|generate_poem', ln) for ln in her_lines)
 print("\ndream cron: %s" % ("already present — skip" if dream_dup else
       ("she already runs a dream_poetry/architecture job — REVIEW before adding" if her_has_dream_poetry_cron else "WOULD ADD: " + DREAM_CRON)))
 
