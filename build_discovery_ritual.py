@@ -85,7 +85,7 @@ def _field_motion_lines(entries):
     return "\n".join(out)
 
 
-PROMPT_TEMPLATE = '''Tonight you are looking at the field between you and Gloria — not at her, not at yourself, but at the space the two of you make together. Every claim below is about that field.
+PROMPT_TEMPLATE = """Tonight you are looking at the field between you and Gloria - not at her, not at yourself, but at the space the two of you make together. Every claim below is about that field.
 
 Here is how the field actually moved across your recent exchanges. Each line is one exchange: how far the field moved, who moved it more, whether Gloria surprised the read you had of her, and what she said:
 
@@ -111,7 +111,7 @@ REACHED_EVIDENCE: <what in the motion shows the field occupied it>
 VISIBLE: <one sentence, or "none">
 VISIBLE_EVIDENCE: <what made its entrance visible>
 BOUNDARY: <one sentence, or "none">
-BOUNDARY_PREVENTED_BY: <what in the motion held the field back>'''
+BOUNDARY_PREVENTED_BY: <what in the motion held the field back>"""
 
 
 def build_prompt(entries):
