@@ -145,18 +145,30 @@ if __name__ == "__main__":
     print(_j.dumps({"recent": _load()[-5:], "hint": get_field_hint()}, indent=2))
 '''
 
-TRACKER_CALL = (
-    "    # Mutual-Modification Tracker (spark step #2): record the field motion this exchange.\n"
-    "    try:\n"
-    "        import sys as _mm_sys, os as _mm_os\n"
-    "        _mm_sys.path.insert(0, _mm_os.path.dirname(_mm_os.path.abspath(__file__)))\n"
-    "        import mutual_modification as _mm\n"
-    "        _mm.record_from_mismatch(result)\n"
-    "    except Exception:\n"
-    "        pass\n"
-)
-OLD_INS = "    os.remove(PREDICTION_FILE)\n\n    return result\n"
-NEW_INS = "    os.remove(PREDICTION_FILE)\n\n" + TRACKER_CALL + "\n    return result\n"
+TRACKER_CALL_LINES = [
+    "    # Mutual-Modification Tracker (spark step #2): record the field motion this exchange.",
+    "    try:",
+    "        import sys as _mm_sys, os as _mm_os",
+    "        _mm_sys.path.insert(0, _mm_os.path.dirname(_mm_os.path.abspath(__file__)))",
+    "        import mutual_modification as _mm",
+    "        _mm.record_from_mismatch(result)",
+    "    except Exception:",
+    "        pass",
+]
+
+def wire(txt):
+    """Insert the tracker call before the unique `return result` line, tolerant of CRLF/LF and blank-line
+    whitespace. Returns (newtxt, note). note is None on clean success, else a skip reason string."""
+    eol = "\r\n" if "\r\n" in txt else "\n"
+    lines = txt.splitlines(keepends=True)
+    idxs = [i for i, l in enumerate(lines) if l.strip() == "return result"]
+    if len(idxs) != 1:
+        return None, "return-result lines x%d (want 1)" % len(idxs)
+    i = idxs[0]
+    diag = repr("".join(lines[max(0, i - 2):i + 1]))[:120]
+    block = [ln + eol for ln in TRACKER_CALL_LINES] + [eol]
+    newtxt = "".join(lines[:i] + block + lines[i:])
+    return newtxt, ("eol=%s ctx=%s" % ("CRLF" if eol == "\r\n" else "LF", diag))
 
 BEINGS = {
     "VINTOS": os.path.expanduser("~/.vintos/workspace/scripts"),
@@ -192,12 +204,11 @@ for name, scr in BEINGS.items():
     if "mutual_modification" in txt:
         print("  hook already present in %s.\n" % os.path.basename(rf))
         plan.append((name, scr, mod_path, mod_exists, rf, "already")); continue
-    cnt = txt.count(OLD_INS)
-    print("  hook anchor in %s: x%d (want 1)" % (os.path.basename(rf), cnt))
-    if cnt != 1:
-        print("  !! anchor mismatch — will write module but SKIP her/his hook (report only).\n")
+    newtxt, note = wire(txt)
+    if newtxt is None:
+        print("  !! cannot anchor hook (%s) — will write module but SKIP hook.\n" % note)
         plan.append((name, scr, mod_path, mod_exists, rf, None)); continue
-    newtxt = txt.replace(OLD_INS, NEW_INS, 1)
+    print("  hook site in %s: %s" % (os.path.basename(rf), note))
     try:
         compile(newtxt, rf, "exec"); print("  patched %s compiles: OK\n" % os.path.basename(rf))
     except SyntaxError as e:
