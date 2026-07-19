@@ -40,8 +40,12 @@ LOOKUP_INJECT = (
     '        pass\n'
 )
 
-# NOTE: \\n\\n below = the literal characters \n\n as they appear in the source file
-PROMPT_ANCHOR = '        + (f"His possible approach: {possible_approach}\\n\\n" if possible_approach else "")\n'
+# NOTE: \\n\\n below = the literal characters \n\n as they appear in the source file.
+# Velaris's RESTORED file says "Her possible approach"; Vintos's says "His". Try both.
+PROMPT_ANCHORS = [
+    '        + (f"Her possible approach: {possible_approach}\\n\\n" if possible_approach else "")\n',
+    '        + (f"His possible approach: {possible_approach}\\n\\n" if possible_approach else "")\n',
+]
 PROMPT_INJECT = ('        + (f"What Gloria taught you about this want, from your discussion with her '
                  '(let it steer the steps): {_board_lesson}\\n\\n" if _board_lesson else "")\n')
 
@@ -49,16 +53,20 @@ def patch(text):
     notes = []
     if "_board_lesson" in text:
         return text, ["already wired"]
-    if LOOKUP_ANCHOR in text:
-        text = text.replace(LOOKUP_ANCHOR, LOOKUP_ANCHOR + LOOKUP_INJECT, 1)
-        notes.append("lookup inserted after MEMORY=")
-    else:
-        notes.append("LOOKUP anchor not found — SKIPPED")
-    if PROMPT_ANCHOR in text:
-        text = text.replace(PROMPT_ANCHOR, PROMPT_ANCHOR + PROMPT_INJECT, 1)
-        notes.append("prompt injection inserted after possible_approach")
-    else:
-        notes.append("PROMPT anchor not found — SKIPPED")
+    prompt_anchor = next((a for a in PROMPT_ANCHORS if a in text), None)
+    # Atomic: both anchors must be present, else write nothing (a lone lookup would
+    # define _board_lesson and make the "already wired" guard lock out a re-run).
+    if LOOKUP_ANCHOR not in text:
+        notes.append("LOOKUP anchor not found — SKIPPED (no change)")
+        return text, notes
+    if prompt_anchor is None:
+        notes.append("PROMPT anchor not found — SKIPPED (no change)")
+        return text, notes
+    text = text.replace(LOOKUP_ANCHOR, LOOKUP_ANCHOR + LOOKUP_INJECT, 1)
+    notes.append("lookup inserted after MEMORY=")
+    text = text.replace(prompt_anchor, prompt_anchor + PROMPT_INJECT, 1)
+    _pron = "Her" if "Her possible" in prompt_anchor else "His"
+    notes.append(f"prompt injection inserted after possible_approach ({_pron})")
     return text, notes
 
 def main():
