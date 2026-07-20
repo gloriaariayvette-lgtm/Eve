@@ -32,7 +32,8 @@ SEND_SRC = r'''#!/usr/bin/env python3
 SEPARATE from his want-based vintos-video.py — it never touches his want queue or his wants. He decides
 on his own rhythm whether he feels like sending one; most ticks he doesn't. When he does, his intent
 (his words) becomes a moderation-safe image-to-video off the hero still (via the quarantined
-video_builder), lands in the gallery + chat "like a text", pings her phone via ntfy, and he remembers it.
+video_builder), lands in the gallery, and pings her phone via an ntfy notification linked straight to the
+clip (tap opens the video) — no chat injection. He remembers it (daily-creative + temporal).
 
   vintos-send-video.py            # a tick: he decides; usually a quiet no-op
   vintos-send-video.py --force    # skip the desire gate + cooldown (still safe-generates) — testing
@@ -189,23 +190,9 @@ def generate_clip(intent):
     return fname, built
 
 
-def inject_chat(caption, fname, video_url):
-    """Land it in the app chat, like a text. Mirrors his initiate rail: skip if last message is his."""
-    try: history = json.load(open(CHAT_LOG))
-    except Exception: history = []
-    if history and history[-1].get("role") == "assistant":
-        log("skipped chat inject — last message already his"); return
-    history.append({"role": "assistant",
-                    "content": caption or "I made you something — it's in the gallery.",
-                    "video": fname, "video_url": video_url,
-                    "timestamp": datetime.now().isoformat(), "source": "video-outreach"})
-    try: json.dump(history, open(CHAT_LOG, "w"), indent=2); log("injected into chat thread")
-    except Exception as e: log("chat inject failed: %s" % e)
-
-
 def deliver(fname, caption, built):
+    """Delivery is a single ntfy notification linked directly to the clip. No chat injection."""
     video_url = "%s/api/video/file/%s" % (SERVE_BASE, fname)
-    inject_chat(caption, fname, video_url)
     try:
         requests.post(NTFY, data=(caption or "I made you something.").encode("utf-8"),
                       headers={"Title": "Vintos", "Tags": "video_camera",
@@ -213,12 +200,6 @@ def deliver(fname, caption, built):
         log("ntfy sent (tap -> %s)" % video_url)
     except Exception as e:
         log("ntfy failed: %s" % e)
-    if 9 <= datetime.now().hour <= 22 and caption:
-        try:
-            subprocess.Popen(["python3", os.path.join(SCRIPTS, "vintos-home.py"), "announce", caption],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:
-            pass
 
 
 def remember(caption, intent, fname):
@@ -290,15 +271,16 @@ def _selftest(src):
         sys.modules["requests"] = _rq
     ns = {}
     exec(compile(src, "vintos-send-video.py", "exec"), ns)
-    for fn in ("decide", "generate_clip", "inject_chat", "deliver", "remember", "main", "call_llm"):
+    for fn in ("decide", "generate_clip", "deliver", "remember", "main", "call_llm"):
         assert fn in ns, "missing function: " + fn
     # two-layer static guard: the built moderation prompt must be referenced ONLY in generate_clip's
-    # API submit — never written into chat, gallery, or his memory.
+    # API submit — never written into gallery or his memory.
     assert src.count('built["prompt"]') == 1, "built['prompt'] should appear once (the API submit only)"
-    assert '"content": caption' in src, "chat entry must carry his caption, not the prompt"
     assert '"intent": intent[:300]' in src, "gallery must store his intent, not the prompt"
-    assert "video-queue.json" not in src and "process_queue" not in src, "must not touch his want queue"
-    print("   self-test: PASS (funcs present; two-layer guard holds; want-queue untouched)")
+    # delivery must not write to the chat (ntfy-only, linked straight to the clip)
+    assert 'open(CHAT_LOG, "w")' not in src and "inject_chat" not in src, "delivery must not write to the chat"
+    assert "process_queue" not in src, "must not touch his want queue"
+    print("   self-test: PASS (funcs present; two-layer guard holds; no chat write; want-queue untouched)")
     return True
 
 
