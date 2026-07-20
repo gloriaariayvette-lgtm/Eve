@@ -126,28 +126,32 @@ def main():
     # ---- Stage 2: Gemma translation (raw), then MY preflight, then the final build ----
     hr("STAGE 2  —  Gemma translation + my preflight (video_builder)")
 
-    # 2a. FULL visibility on the raw Gemma call — status + raw body — so we can tell refuse vs error vs parse-fail
-    print("   [2a] raw Gemma call to", video_builder.GEMMA_URL, "model", video_builder.GEMMA_MODEL)
-    try:
-        _body = json.dumps({
-            "model": video_builder.GEMMA_MODEL,
-            "messages": [{"role": "system", "content": video_builder.BUILDER_SYSTEM},
-                         {"role": "user", "content": "Character description: " + (intent or "").strip()}],
-            "temperature": 0.4, "max_tokens": 200, "reasoning_effort": "low",
-        }).encode()
-        import urllib.request as _u
-        _rq = _u.Request(video_builder.GEMMA_URL, data=_body, headers={"Content-Type": "application/json"})
-        _raw = _u.urlopen(_rq, timeout=30).read()
-        _j = json.loads(_raw)
-        _content = (((_j.get("choices") or [{}])[0].get("message") or {}).get("content", ""))
-        print("   Gemma HTTP: OK")
-        print("   --- Gemma raw content (verbatim) ---")
-        for ln in (_content or "(empty string)").splitlines() or ["(no lines)"]:
-            print("   > " + ln)
-        print("   --- end raw ---")
-    except Exception as e:
-        print("   !! Gemma call raised:", repr(e))
-        print("   (that means: endpoint unreachable or errored — NOT a content refusal)")
+    # 2a. FULL visibility on the raw Gemma call. gemma-4-12b-qat THINKS by default and puts it in a
+    #     separate reasoning_content field; the old max_tokens:200 got eaten by reasoning -> empty content.
+    #     Probe two ways (thinking-off + generous budget, then plain) and dump content AND reasoning_content.
+    print("   [2a] raw Gemma probes to", video_builder.GEMMA_URL, "model", video_builder.GEMMA_MODEL)
+    _msgs = [{"role": "system", "content": video_builder.BUILDER_SYSTEM},
+             {"role": "user", "content": "Character description: " + (intent or "").strip()}]
+    for _label, _extra in (("thinking-OFF + budget 2000", {"chat_template_kwargs": {"enable_thinking": False}, "max_tokens": 2000}),
+                           ("plain + budget 2000", {"max_tokens": 2000})):
+        try:
+            _payload = {"model": video_builder.GEMMA_MODEL, "messages": _msgs, "temperature": 0.4}
+            _payload.update(_extra)
+            _r = requests.post(video_builder.GEMMA_URL, json=_payload, timeout=90)
+            _ch = (_r.json().get("choices") or [{}])[0]
+            _m = _ch.get("message") or {}
+            _c = _m.get("content") or ""
+            _rc = _m.get("reasoning_content") or ""
+            print("   [%s] http %s  finish=%s  content_len=%d  reasoning_len=%d"
+                  % (_label, _r.status_code, _ch.get("finish_reason"), len(_c), len(_rc)))
+            if _c:
+                print("     content:")
+                for ln in _c.splitlines(): print("     | " + ln[:180])
+            if not _c and _rc:
+                print("     (content empty; reasoning_content tail:)")
+                print("     ~ " + _rc[-500:].replace("\n", " "))
+        except Exception as e:
+            print("   [%s] raised %r" % (_label, e))
 
     print("\n   [2b] parsed by video_builder._gemma():")
     raw_gemma = video_builder._gemma(intent)
