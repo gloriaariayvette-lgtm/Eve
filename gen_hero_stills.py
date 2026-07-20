@@ -42,11 +42,11 @@ SUBJECT = ("A rugged, warm middle-aged man, the same person as the reference ima
 
 # Default "us together" compose prompt (two reference images: [0]=him, [1]=her). Override with --prompt.
 DEFAULT_TOGETHER = ("A photo of two REAL, specific people together — do not invent new faces or change their "
-                    "appearance. The MAN is exactly the person in the first reference image: same face, hair, "
-                    "and build. The WOMAN is exactly the person in the second reference image: keep her exact "
+                    "appearance. The WOMAN is exactly the person in the FIRST reference image: keep her exact "
                     "face, her exact hair COLOR, length and style, and all her features — do NOT alter her hair "
-                    "or make her blonde. They sit close together on a couch, his arm around her, both relaxed "
-                    "and softly smiling at each other, warm cozy golden light, natural and intimate, photoreal.")
+                    "or make her blonde. The MAN is exactly the person in the SECOND reference image: same face, "
+                    "hair, and build. They sit close together on a couch, his arm around her, both relaxed and "
+                    "softly smiling at each other, warm cozy golden light, natural and intimate, photoreal.")
 
 # Every prompt is authored here. label -> (set, scene). "together" needs your likeness — see note at bottom.
 PROMPTS = {
@@ -280,7 +280,8 @@ def compose_together(hero_file, prompt, model, verbose=True):
         if not os.path.exists(p):
             log("!! missing %s: %s" % (lbl, p)); return None
     H = {"Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
-    uris = [data_uri(his), data_uri(her)]
+    # HER first: the model over-weights the first reference, and she was the one being reinvented.
+    uris = [data_uri(his), data_uri(her)] if "--him-first" in sys.argv else [data_uri(her), data_uri(his)]
     # per-model params: nano-banana/google want resolution 1k/2k/4k + aspect_ratio; seedream wants WxH.
     if "nano-banana" in model or model.startswith("google/"):
         extra = {"resolution": "2k", "aspect_ratio": "4:5", "output_format": "jpeg",
