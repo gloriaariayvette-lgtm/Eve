@@ -20,7 +20,13 @@ import os, json, sys, time
 
 APPLY = "--apply" in sys.argv
 ALL = "--all" in sys.argv
+# --path <file> targets a different being's wants (default: Velaris). Vintos:
+#   ... --path ~/.vintos/workspace/memory/current-wants.json --all --apply
 PATH = os.path.expanduser("~/.openclaw/workspace/memory/current-wants.json")
+if "--path" in sys.argv:
+    _i = sys.argv.index("--path")
+    if _i + 1 < len(sys.argv):
+        PATH = os.path.expanduser(sys.argv[_i + 1])
 
 MATERIAL = ["kiln","clay","terracotta","ochre","mineral","sediment","silt","stone","cathedral","creep",
     "deform","yield","fiber","fibre","migrat","plastic","elastic","erode","erosion","vessel","glaze","forge",
