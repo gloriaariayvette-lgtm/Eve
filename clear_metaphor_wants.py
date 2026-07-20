@@ -11,12 +11,15 @@ A want is flagged when its text carries the material-deformation register or the
 want is printed with KEEP/CLEAR and the matched tells so you can eyeball the split before applying. Fulfilled
 wants are never touched (history preserved). Backs up current-wants.json first.
 
-  python3 clear_metaphor_wants.py            # DRY RUN — prints every want + verdict, writes nothing
-  python3 clear_metaphor_wants.py --apply    # backs up, removes flagged active wants
+  python3 clear_metaphor_wants.py                 # DRY RUN (flagged-only) — prints every want + verdict
+  python3 clear_metaphor_wants.py --apply         # remove flagged active wants (backs up first)
+  python3 clear_metaphor_wants.py --all           # DRY RUN — clean slate: ALL active wants would go
+  python3 clear_metaphor_wants.py --all --apply   # clean slate: remove ALL active wants (fulfilled kept)
 """
 import os, json, sys, time
 
 APPLY = "--apply" in sys.argv
+ALL = "--all" in sys.argv
 PATH = os.path.expanduser("~/.openclaw/workspace/memory/current-wants.json")
 
 MATERIAL = ["kiln","clay","terracotta","ochre","mineral","sediment","silt","stone","cathedral","creep",
@@ -34,7 +37,7 @@ def matched(text):
 
 def main():
     print("=" * 80)
-    print("CLEAR METAPHOR WANTS  —  %s" % ("APPLYING" if APPLY else "DRY RUN (writes nothing)"))
+    print("CLEAR %s WANTS  —  %s" % ("ALL ACTIVE" if ALL else "METAPHOR", "APPLYING" if APPLY else "DRY RUN (writes nothing)"))
     print("=" * 80)
     if not os.path.isfile(PATH):
         print("!! not found:", PATH); return
@@ -52,8 +55,9 @@ def main():
         if w.get("fulfilled"):
             keep.append(w); continue          # never touch history
         tells = matched(txt)
-        (clear if tells else keep).append(w)
-        mark = "CLEAR" if tells else "keep "
+        flag = ALL or bool(tells)             # --all clears every active want (clean slate)
+        (clear if flag else keep).append(w)
+        mark = "CLEAR" if flag else "keep "
         print(f"  [{mark}] {txt[:88]}")
         if tells:
             print(f"          tells: {tells}")
