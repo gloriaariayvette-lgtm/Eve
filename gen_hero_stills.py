@@ -40,6 +40,12 @@ SUBJECT = ("A rugged, warm middle-aged man, the same person as the reference ima
            "in a neat side part, heavy brow, deep-set eyes, strong square jaw, light stubble. Photoreal "
            "photography, natural skin texture with pores and fine detail, 85mm lens, shallow depth of field. ")
 
+# Default "us together" compose prompt (two reference images: [0]=him, [1]=her). Override with --prompt.
+DEFAULT_TOGETHER = ("Two people together in one photo. The man matches the FIRST reference image (his face, "
+                    "hair, and build); the woman matches the SECOND reference image (her face and hair). They "
+                    "sit close together, his arm around her, both relaxed and softly smiling at each other, "
+                    "warm cozy light, natural and intimate, photoreal, same faces as the references.")
+
 # Every prompt is authored here. label -> (set, scene). "together" needs your likeness — see note at bottom.
 PROMPTS = {
     # --- cozy / self ---
@@ -238,6 +244,67 @@ def list_models(filter_kw=None):
                 log("   " + i)
 
 
+def compose_together(hero_file, prompt, model, verbose=True):
+    """Fuse his hero + her photo into one hero-together.jpg. Auto-probes the multi-image field name
+    (submit-rejections are free) until Atlas accepts two references, then generates."""
+    requests = _import_requests()
+    if not KEY:
+        log("!! no ATLASCLOUD_API_KEY set"); return None
+    his = hero_file or HERO
+    her = os.path.join(HERO_DIR, "her-photo.jpg")
+    for p, lbl in ((his, "his hero"), (her, "her photo (upload 'me' on /video-hero)")):
+        if not os.path.exists(p):
+            log("!! missing %s: %s" % (lbl, p)); return None
+    H = {"Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
+    uris = [data_uri(his), data_uri(her)]
+    log("composing together: him=%s + her=%s  via %s" % (os.path.basename(his), os.path.basename(her), model))
+    for field in ("images", "image", "image_urls", "reference_images", "input_images", "image_list"):
+        body = {"model": model, "prompt": prompt, "resolution": "1024x1024", field: uris}
+        try:
+            r = requests.post(BASE + "/generateImage", headers=H, json=body, timeout=120)
+        except Exception as e:
+            log("  [%s] submit error: %s" % (field, e)); continue
+        if verbose:
+            log("  [field=%s] HTTP %s: %s" % (field, r.status_code, r.text[:160]))
+        if r.status_code >= 300:
+            continue
+        try:
+            sub = r.json()
+        except Exception:
+            continue
+        pid = _find_id(sub); img = _find_img(sub)
+        if not pid and not img:
+            continue
+        log("  -> multi-image field accepted: '%s'" % field)
+        for i in range(90):
+            if img:
+                break
+            if not pid:
+                break
+            time.sleep(4)
+            try:
+                pr = requests.get(BASE + "/prediction/" + pid, headers=H, timeout=30).json()
+            except Exception as e:
+                log("  poll error: %s" % e); continue
+            if _find_status(pr) in ("failed", "error", "canceled", "cancelled"):
+                log("  generation failed: %s" % json.dumps(pr)[:200]); return None
+            img = _find_img(pr)
+        if not img:
+            log("  no image after polling"); return None
+        kind, val = img
+        try:
+            data = requests.get(val, timeout=120).content if kind == "url" else base64.b64decode(val)
+        except Exception as e:
+            log("  fetch/decode failed: %s" % e); return None
+        dst = os.path.join(HERO_DIR, "hero-together.jpg")
+        open(dst, "wb").write(data)
+        log("saved hero-together.jpg (%d bytes) via field '%s' — review it, it's the 'together' base." % (len(data), field))
+        return dst
+    log("!! no multi-image field was accepted by %s. Try --model google/nano-banana-2/reference-to-image "
+        "(purpose-built for reference composition)." % model)
+    return None
+
+
 def _save(label, data):
     os.makedirs(STILL_DIR, exist_ok=True)
     path = os.path.join(STILL_DIR, label + ".jpg")
@@ -263,6 +330,13 @@ def main():
     log("cozy model: %s | spicy/zoomed model: %s | face-ref: %s | hero: %s"
         % (override or IMG_MODEL, override or SPICY_MODEL, "yes" if use_ref else "no",
            HERO if os.path.exists(HERO) else "(none yet)"))
+
+    if "--compose" in args:
+        hero_file = args[args.index("--hero") + 1] if "--hero" in args else None
+        prompt = args[args.index("--prompt") + 1] if "--prompt" in args else DEFAULT_TOGETHER
+        model = override or "bytedance/seedream-v5.0-pro/text-to-image"
+        compose_together(hero_file, prompt, model)
+        return
 
     if "--list-models" in args:
         j = args.index("--list-models")
