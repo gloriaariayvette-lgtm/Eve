@@ -188,6 +188,56 @@ def generate(prompt, use_ref, model=None, verbose=False):
         log("image fetch/decode failed: %s" % e); return None
 
 
+def list_models(filter_kw=None):
+    """Query Atlas for the real model catalog and print ids (filtered). No guessing on model names."""
+    requests = _import_requests()
+    if not KEY:
+        log("!! no ATLASCLOUD_API_KEY set"); return
+    H = {"Authorization": "Bearer " + KEY}
+    tried = ["https://api.atlascloud.ai/api/v1/models", "https://api.atlascloud.ai/v1/models",
+             "https://api.atlascloud.ai/api/v1/model/models", ATLAS_BASE + "/list"]
+    data = None
+    for u in tried:
+        try:
+            r = requests.get(u, headers=H, timeout=30)
+            if r.status_code == 200:
+                data = r.json(); log("models from: %s" % u); break
+            else:
+                log("  %s -> %s" % (u, r.status_code))
+        except Exception as e:
+            log("  %s -> %s" % (u, e))
+    if data is None:
+        log("could not list models — none of the endpoints returned 200."); return
+    ids = []
+
+    def _walk(o):
+        if isinstance(o, dict):
+            for k in ("id", "model", "model_id", "name", "slug"):
+                v = o.get(k)
+                if isinstance(v, str) and "/" in v:
+                    ids.append(v)
+            for v in o.values():
+                _walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                _walk(v)
+        elif isinstance(o, str) and "/" in o:
+            ids.append(o)
+
+    _walk(data)
+    ids = sorted(set(ids))
+    kw = (filter_kw or "").lower()
+    hits = [i for i in ids if (not kw) or (kw in i.lower())]
+    log("\n%d model ids%s:" % (len(hits), (" matching '%s'" % kw) if kw else ""))
+    for i in hits:
+        log("   " + i)
+    if not hits and ids:
+        log("(no match; showing anything image-ish)")
+        for i in ids:
+            if any(w in i.lower() for w in ("image", "seedream", "seedance", "flux", "spicy", "nsfw", "wan")):
+                log("   " + i)
+
+
 def _save(label, data):
     os.makedirs(STILL_DIR, exist_ok=True)
     path = os.path.join(STILL_DIR, label + ".jpg")
@@ -213,6 +263,12 @@ def main():
     log("cozy model: %s | spicy/zoomed model: %s | face-ref: %s | hero: %s"
         % (override or IMG_MODEL, override or SPICY_MODEL, "yes" if use_ref else "no",
            HERO if os.path.exists(HERO) else "(none yet)"))
+
+    if "--list-models" in args:
+        j = args.index("--list-models")
+        kw = args[j + 1] if (j + 1 < len(args) and not args[j + 1].startswith("--")) else "image"
+        list_models(kw)
+        return
 
     if "--promote" in args:
         i = args.index("--promote")
