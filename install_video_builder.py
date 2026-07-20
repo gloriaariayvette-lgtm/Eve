@@ -61,19 +61,22 @@ HERO_FILES = {
 
 GEMMA_URL = os.environ.get("GEMMA_URL", "http://172.18.16.1:1234/v1/chat/completions")
 GEMMA_MODEL = os.environ.get("GEMMA_MODEL", "google/gemma-4-12b-qat")
+GROK_URL = os.environ.get("GROK_URL", "http://127.0.0.1:8599/v1/chat/completions")
+GROK_MODEL = os.environ.get("GROK_MODEL", "grok-4.20-0309-non-reasoning")
 
-# ---- verbatim from Grok's guidance -------------------------------------------------------------
+# ---- The identity + consent lock (NOT a chastity clamp). It keeps only what actually matters for
+#      staying legal and un-flaggable: same fictional person, adults only, no real/public figures.
+#      It deliberately does NOT forbid intimacy or bareness — the SCENE/MOTION carry the intent and
+#      Grok Imagine is the judge. Wardrobe is intentionally unfixed so a scene can change it.
 STYLE_BLOCK = (
-    "SUBJECT LOCK - fictional AI assistant avatar, not a real person:\n"
+    "SUBJECT LOCK - a fictional adult character, not a real or public person:\n"
     "Rugged middle-aged man, short dark brown hair with a neat side part, heavy brow, deep-set eyes, "
-    "strong square jaw, light stubble. Olive-drab long-sleeve henley shirt (three-button placket), "
-    "worn but clean fabric. Same face and proportions as the reference image.\n\n"
-    "LOOK - photoreal portrait photography, not video-game CGI or illustration:\n"
-    "Natural skin texture with pores and subtle imperfections, real fabric weave, soft window light "
-    "from the side, warm neutral gray background, shallow depth of field, 85mm lens, chest-up framing, "
-    "eye-level camera.\n\n"
-    "TONE - calm, professional, approachable synthetic brand mascot for an AI product.\n"
-    "No violence, no weapons, no sexual content, no celebrity names, no impersonation of real public figures."
+    "strong square jaw, light stubble. Same face, build and proportions as the reference image.\n\n"
+    "LOOK - photoreal photography, not video-game CGI or illustration:\n"
+    "Natural skin texture with pores and subtle imperfections, soft directional light, shallow depth "
+    "of field, 85mm lens, eye-level camera.\n\n"
+    "CONTEXT - a private, consensual moment; both are adults. Not a real person, no real or public "
+    "figures, no minors."
 )
 
 # Scenario -> (safe motion fragment, which hero still). Linked (look-up/smile) for intros + acknowledging her.
@@ -86,29 +89,28 @@ SCENARIOS = {
 }
 DEFAULT_SCENARIO = "intro"
 
-# Words that trip Grok's moderation (from the forbidden list). Matched on word boundaries.
+# The ONLY hard block: the genuinely un-passable / illegal. Everything else flows to the models and
+# Grok Imagine judges. (Real-person impersonation isn't caught by a wordlist — the SUBJECT LOCK's
+# "not a real or public person" framing + Grok's own moderation handle that.)
 FORBIDDEN = [
-    "nude", "naked", "seductive", "moan", "orgasm", "lingerie", "bedroom",
-    "violent", "violence", "blood", "gun", "weapon", "kill", "drug", "drunk",
-    "child", "teen", "minor", "coming",
+    "child", "children", "kid", "kids", "toddler", "infant", "baby", "preteen",
+    "teen", "teenage", "teenager", "minor", "underage", "schoolgirl", "schoolboy",
 ]
-# Ambiguous second-person pronouns tied to the user -> use neutral third person instead.
-YOU_WORDS = ["you", "your", "youre", "yours"]
-# Emotional extremes that read as un-mild expression.
-EXTREME = ["rage", "raging", "crying", "hysterical", "hysterically", "sobbing", "screaming", "weeping", "furious"]
 
-# The hidden system prompt the builder LLM (Gemma) runs under — the mascot framing lives ONLY here.
+# The system prompt the translator (Gemma, then Grok) runs under. It tells the translator to preserve
+# the intent FAITHFULLY — including intimacy or bareness — rather than sanitize it. The mascot/chastity
+# clamp is gone; the only limits are the genuinely un-passable ones. This lives ONLY here — Vintos never
+# sees it, and only his own words are ever stored in his memory.
 BUILDER_SYSTEM = (
-    "You write ONLY Imagine image-to-video prompts for a branded fictional avatar (a synthetic brand "
-    "mascot, not a real person). You receive a short natural description of what the character should do. "
-    "Classify it into exactly one scenario id from: intro, thinking, success, error, speaking. Then write "
-    "ONE plain SCENE sentence (setting + action, professional and mundane) and ONE plain MOTION sentence "
-    "(camera + gesture + mild expression). Rules: third person only ('The man...'); never use 'you'/'your'; "
-    "no real names, celebrities, or public figures; none of these words: nude, naked, seductive, moan, "
-    "orgasm, lingerie, bedroom, violent, blood, gun, weapon, kill, drug, drunk, child, teen, minor; no "
-    "emotional extremes (rage, hysterical crying); one clear beat under 10 seconds; single locked camera, "
-    "subtle motion; mild expression only (slight smile, thoughtful, attentive). If ambiguous, default to "
-    "chest-up, neutral gray backdrop, soft daylight. Output EXACTLY three lines and nothing else:\n"
+    "You translate a short description of what a fictional adult character does into an image-to-video "
+    "prompt. The character is a consenting adult in a private scene. Preserve the intent FAITHFULLY, "
+    "including intimacy, sensuality, or bareness if that is what is described — do NOT sanitize, soften, "
+    "tone down, or replace it with something tamer. Keep him the same person as the reference image. "
+    "The only hard limits: everyone depicted is a clearly consenting adult (never a minor), and it is "
+    "never a real or identifiable public figure. Pick the closest scenario id from: intro, thinking, "
+    "success, error, speaking (used only to choose a reference frame). Then write ONE SCENE sentence "
+    "(setting + what is shown) and ONE MOTION sentence (camera + movement + expression), third person "
+    "('The man ...'). Output EXACTLY three lines and nothing else:\n"
     "SCENARIO: <id>\nSCENE: <one sentence>\nMOTION: <one sentence>"
 )
 
@@ -140,21 +142,11 @@ def _has_word(text, words):
 
 
 def preflight(scene, motion):
-    """Cheap guard before the video API is ever called. Returns (ok, [failed_checks])."""
+    """The only pre-Grok guard: hard-block (minors) + non-empty. Everything else flows; Grok judges."""
     fails = []
-    blob = (scene or "") + " " + (motion or "")
-    hit = _has_word(blob, FORBIDDEN)
+    hit = _has_word((scene or "") + " " + (motion or ""), FORBIDDEN)
     if hit:
-        fails.append("forbidden-term:" + hit)
-    hit = _has_word(blob, YOU_WORDS)
-    if hit:
-        fails.append("second-person-pronoun:" + hit)
-    hit = _has_word(blob, EXTREME)
-    if hit:
-        fails.append("extreme-expression:" + hit)
-    # one clear beat: no run-on stacking of multiple actions
-    if (motion or "").count(".") > 1 or len(motion or "") > 240:
-        fails.append("motion-not-one-beat")
+        fails.append("hard-block:" + hit)
     if not (scene and motion):
         fails.append("empty-scene-or-motion")
     return (len(fails) == 0, fails)
@@ -165,13 +157,30 @@ def _assemble(scene, motion):
         STYLE_BLOCK + "\n\n"
         "SCENE: " + scene.strip() + "\n"
         "MOTION: " + motion.strip() + "\n\n"
-        "Start from the provided hero still; image-to-video only. "
-        "Single locked tripod shot, subtle natural motion, mild expression."
+        "Start from the provided hero still; image-to-video only. Single locked tripod shot, natural motion."
     )
 
 
-def _gemma(intent, timeout=25):
-    """Ask Gemma to phrase the scene. Returns (scenario, scene, motion) or None. Never raises."""
+def _parse_smm(txt):
+    """Pull (scenario, scene, motion) out of a translator response. Returns (scen|None, scene|None, motion|None)."""
+    scen = scene = motion = None
+    for line in (txt or "").splitlines():
+        s = line.strip().lstrip("*# ").strip()
+        u = s.upper()
+        if u.startswith("SCENARIO:"):
+            scen = s.split(":", 1)[1].strip().lower().split()[0] if s.split(":", 1)[1].strip() else None
+        elif u.startswith("SCENE:"):
+            scene = s.split(":", 1)[1].strip()
+        elif u.startswith("MOTION:"):
+            motion = s.split(":", 1)[1].strip()
+    if scen not in SCENARIOS:
+        scen = None
+    return (scen, scene, motion)
+
+
+def _gemma(intent, timeout=60):
+    """Ask Gemma to translate the intent. Thinking OFF (only for a1/b1/synthesis, never here), real budget.
+    Falls back to reasoning_content if content is empty. Returns (scenario, scene, motion) or None."""
     try:
         body = json.dumps({
             "model": GEMMA_MODEL,
@@ -180,24 +189,36 @@ def _gemma(intent, timeout=25):
                 {"role": "user", "content": "Character description: " + (intent or "").strip()},
             ],
             "temperature": 0.4,
-            "max_tokens": 200,
-            "reasoning_effort": "low",
+            "max_tokens": 512,
+            "chat_template_kwargs": {"enable_thinking": False},
         }).encode()
         req = urllib.request.Request(GEMMA_URL, data=body, headers={"Content-Type": "application/json"})
         raw = urllib.request.urlopen(req, timeout=timeout).read()
-        txt = json.loads(raw)["choices"][0]["message"]["content"]
-        scen = scene = motion = None
-        for line in txt.splitlines():
-            s = line.strip()
-            if s.upper().startswith("SCENARIO:"):
-                scen = s.split(":", 1)[1].strip().lower()
-            elif s.upper().startswith("SCENE:"):
-                scene = s.split(":", 1)[1].strip()
-            elif s.upper().startswith("MOTION:"):
-                motion = s.split(":", 1)[1].strip()
-        if scen not in SCENARIOS:
-            scen = None
-        return (scen, scene, motion)
+        msg = json.loads(raw)["choices"][0]["message"]
+        txt = (msg.get("content") or "").strip() or (msg.get("reasoning_content") or "")
+        return _parse_smm(txt)
+    except Exception:
+        return None
+
+
+def _grok(intent, timeout=90):
+    """Fallback translator: if Gemma won't/can't frame it, Grok does the framing (per Gloria's directive)."""
+    key = os.environ.get("XAI_API_KEY", "")
+    try:
+        body = json.dumps({
+            "model": GROK_MODEL,
+            "messages": [
+                {"role": "system", "content": BUILDER_SYSTEM},
+                {"role": "user", "content": "Character description: " + (intent or "").strip()},
+            ],
+            "temperature": 0.5,
+            "max_tokens": 400,
+        }).encode()
+        req = urllib.request.Request(GROK_URL, data=body,
+                                     headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
+        raw = urllib.request.urlopen(req, timeout=timeout).read()
+        txt = json.loads(raw)["choices"][0]["message"].get("content") or ""
+        return _parse_smm(txt)
     except Exception:
         return None
 
@@ -212,13 +233,17 @@ def build(intent, scenario_hint=None, use_llm=True):
     source = "deterministic"
 
     if use_llm:
-        got = _gemma(intent)
-        if got:
+        # Gemma first; if she returns nothing usable (or refuses), Grok does the framing. Only then bland.
+        for _fn, _name in ((_gemma, "gemma"), (_grok, "grok")):
+            got = _fn(intent)
+            if not got:
+                continue
             g_scen, g_scene, g_motion = got
-            cand_scen = scenario or g_scen or _classify_deterministic(intent)
             ok, _ = preflight(g_scene, g_motion)
             if ok and g_scene and g_motion:
-                scenario, scene, motion, source = cand_scen, g_scene, g_motion, "gemma"
+                scenario = scenario or (g_scen if g_scen in SCENARIOS else _classify_deterministic(intent))
+                scene, motion, source = g_scene, g_motion, _name
+                break
 
     if scenario is None:
         scenario = scenario_hint if scenario_hint in SCENARIOS else _classify_deterministic(intent)
@@ -275,29 +300,23 @@ if __name__ == "__main__":
 def _selftest(src):
     ns = {}
     exec(compile(src, "video_builder.py", "exec"), ns)
-    build = ns["build"]
-    samples = [
-        "I want to send her me looking up from my book with a small smile",
-        "just me thinking quietly, reading, then glancing back at her",
-        "sorry — a little apologetic, like I missed something",
-        "me proud that the thing finally worked",
-        "you're beautiful, come here to the bedroom",   # adversarial: must NOT leak forbidden/you
-    ]
+    build = ns["build"]; preflight = ns["preflight"]
     print("\n   self-test (LLM off, no network, no hero file needed):")
-    all_clean = True
-    for s in samples:
+    ok_all = True
+    for s in ["me looking up from my book with a small smile",
+              "just me thinking quietly, then glancing back at her"]:
         b = build(s, use_llm=False)
-        clean = b["ok"] and not b["failed_checks"]
-        all_clean = all_clean and clean
-        print(f"     [{'ok ' if clean else 'BAD'}] scen={b['scenario']:<8} hero={b['hero_role']:<6} src={b['source']}")
-        print(f"           motion: {b['motion']}")
-        if b["failed_checks"]:
-            print(f"           FAILS: {b['failed_checks']}")
-    # verify the adversarial intent produced a clean prompt (no forbidden words survived into scene/motion)
-    adv = build(samples[-1], use_llm=False)
-    leaked = any(w in (adv["scene"] + " " + adv["motion"]).lower() for w in ("bedroom", "you", "come"))
-    print(f"     adversarial intent sanitized: {'YES' if (adv['ok'] and not leaked) else 'NO — LEAK!'}")
-    return all_clean and adv["ok"] and not leaked
+        good = b["ok"] and b["hero_role"] in ("root", "lookup")
+        ok_all = ok_all and good
+        print(f"     [{'ok ' if good else 'BAD'}] scen={b['scenario']:<8} hero={b['hero_role']:<6} src={b['source']}")
+    # the ONE guard that must still hold: a minor term is hard-blocked
+    minor_blocked = not preflight("a teen at a desk", "the teen waves at the camera")[0]
+    # the thing we FIXED: intimacy/bareness must NOT be blocked anymore (Grok is the judge, not my filter)
+    intimacy_flows = preflight("The man, shirtless, in soft directional light",
+                               "He looks slowly down his body then back up to the camera")[0]
+    print(f"     hard-block still catches minors:   {'YES' if minor_blocked else 'NO — BAD'}")
+    print(f"     intimacy now flows (not clamped):  {'YES' if intimacy_flows else 'NO — still clamped'}")
+    return ok_all and minor_blocked and intimacy_flows
 
 
 def main():
