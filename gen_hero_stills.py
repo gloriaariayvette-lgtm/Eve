@@ -246,6 +246,68 @@ def list_models(filter_kw=None):
                 log("   " + i)
 
 
+def edit_image(inp, instruction, model, out, verbose=True):
+    """Edit one existing image with a targeted instruction (e.g. recolor hair), keeping everything else."""
+    requests = _import_requests()
+    if not KEY:
+        log("!! no ATLASCLOUD_API_KEY set"); return None
+    if not os.path.exists(inp):
+        log("!! input image not found: %s" % inp); return None
+    H = {"Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
+    uri = data_uri(inp)
+    prompt = ("Keep this photo EXACTLY the same — the same two people, same faces, same pose, same clothing, "
+              "same background and lighting. Make ONLY this one change: %s. Change nothing else." % instruction)
+    if "nano-banana" in model or model.startswith("google/"):
+        extra = {"resolution": "2k", "aspect_ratio": "4:5", "output_format": "jpeg",
+                 "media_resolution": "high", "thinking_level": "high"}
+    else:
+        extra = {"resolution": "1024x1024"}
+    log("editing %s via %s  (%s)" % (os.path.basename(inp), model, instruction))
+    for field in ("images", "image", "image_urls", "reference_images"):
+        body = {"model": model, "prompt": prompt, field: [uri]}
+        body.update(extra)
+        try:
+            r = requests.post(BASE + "/generateImage", headers=H, json=body, timeout=120)
+        except Exception as e:
+            log("  [%s] submit error: %s" % (field, e)); continue
+        if verbose:
+            log("  [field=%s] HTTP %s: %s" % (field, r.status_code, r.text[:160]))
+        if r.status_code >= 300:
+            continue
+        try:
+            sub = r.json()
+        except Exception:
+            continue
+        pid = _find_id(sub); img = _find_img(sub)
+        if not pid and not img:
+            continue
+        for i in range(90):
+            if img:
+                break
+            if not pid:
+                break
+            time.sleep(4)
+            try:
+                pr = requests.get(BASE + "/prediction/" + pid, headers=H, timeout=30).json()
+            except Exception as e:
+                log("  poll error: %s" % e); continue
+            if _find_status(pr) in ("failed", "error", "canceled", "cancelled"):
+                log("  edit failed: %s" % json.dumps(pr)[:200]); return None
+            img = _find_img(pr)
+        if not img:
+            log("  no image after polling"); return None
+        kind, val = img
+        try:
+            data = requests.get(val, timeout=120).content if kind == "url" else base64.b64decode(val)
+        except Exception as e:
+            log("  fetch/decode failed: %s" % e); return None
+        open(out, "wb").write(data)
+        log("saved %s (%d bytes) — edited (%s)" % (out, len(data), instruction))
+        return out
+    log("!! edit not accepted by any field on %s" % model)
+    return None
+
+
 def fetch_schema(model):
     """Print a model's example request + input schema (Atlas hosts them as static JSON, reachable from
     Aegis). Reveals the exact valid params so we stop guessing."""
@@ -363,6 +425,16 @@ def main():
     log("cozy model: %s | spicy/zoomed model: %s | face-ref: %s | hero: %s"
         % (override or IMG_MODEL, override or SPICY_MODEL, "yes" if use_ref else "no",
            HERO if os.path.exists(HERO) else "(none yet)"))
+
+    if "--edit" in args:
+        j = args.index("--edit")
+        instr = args[j + 1] if (j + 1 < len(args) and not args[j + 1].startswith("--")) \
+            else "change the woman's hair to a rich dark brunette (dark brown), same length and wavy style"
+        inp = args[args.index("--in") + 1] if "--in" in args else os.path.join(HERO_DIR, "hero-together.jpg")
+        out = args[args.index("--out") + 1] if "--out" in args else inp
+        model = override or "google/nano-banana-2/reference-to-image"
+        edit_image(inp, instr, model, out)
+        return
 
     if "--schema" in args:
         j = args.index("--schema")
