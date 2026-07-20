@@ -58,6 +58,9 @@ MIND_API = os.environ.get("VINTOS_MIND_API", "http://127.0.0.1:8599/v1/chat/comp
 
 # Atlas Cloud — uncensored spicy image-to-video
 ATLAS_KEY = os.environ.get("ATLASCLOUD_API_KEY", "")
+if not ATLAS_KEY:  # so cron works without an exported env var — drop the key in ~/.vintos/atlas-key (chmod 600)
+    try: ATLAS_KEY = open(os.path.expanduser("~/.vintos/atlas-key")).read().strip()
+    except Exception: ATLAS_KEY = ""
 ATLAS_BASE = os.environ.get("ATLAS_BASE", "https://api.atlascloud.ai/api/v1/model")
 ATLAS_MODEL = os.environ.get("ATLAS_MODEL", "atlascloud/wan-2.7-spicy/image-to-video")
 ATLAS_RES = os.environ.get("ATLAS_RES", "720P")
@@ -219,7 +222,8 @@ def decide(force=False):
         "KIND: together | self | sexual\n"
         "STILL: <for self/sexual, one label from the list above; leave blank for together>\n"
         "PROMPT: <if YES, the actual video you want made — the motion, the moment, in your own voice>\n"
-        "SAY: <if YES, the short line you send with it, to her>")
+        "SAY: <if YES, the message you send with it — a line or two, in your own voice, whatever you "
+        "want to say to her; this text arrives with the video>")
     _sil = silence_hours()
     _sig = (("It has been about %s hours since Gloria last reached out to you." % _sil)
             if _sil is not None else "You're not sure exactly how long it's been since she last reached out.")
