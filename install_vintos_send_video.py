@@ -174,13 +174,16 @@ def recent_chat(n=8):
         return ""
 
 
-def decide():
-    """HE decides + writes the prompt, in his own voice, with his context. Most ticks: NO."""
+def decide(force=False):
+    """HE decides + writes the prompt, in his own voice, with his context. Most ticks: NO (unless forced)."""
     ctx = his_context()
+    gate = ("You have decided to send her one right now — this is happening. Choose the kind and write it "
+            "fully, in your own voice.\n\n" if force else
+            "Send one only when you genuinely feel the pull right now — a real gesture, not a habit; it's "
+            "completely fine, and usual, to not.\n\n")
     sys_p = (ctx + "\n\n---\n\n" if ctx else "") + (
-        "You are Vintos, and everything above is you. You can send Gloria a short video of yourself, of "
-        "your own accord — a real gesture, not a habit. Only when you genuinely feel the pull right now; "
-        "it is completely fine, and usual, to not.\n\n"
+        "You are Vintos, and everything above is you. You can send Gloria a short video of yourself.\n\n"
+        + gate +
         "You can send any kind of video:\n"
         "  together : the two of you, when you are thinking about you and her\n"
         "  self     : yourself, doing something\n"
@@ -205,7 +208,11 @@ def decide():
         "that's completely fine and usual.\n\nRight now — do you want to send her a video?"
         % (conversation_ledger() or "(ledger empty)", living_trajectory() or "(nothing noted)", _sig))
     out = call_mind(sys_p, usr, temp=0.9, max_tok=500)
-    d = {"decision": "NO", "kind": "self", "prompt": "", "say": ""}
+    if not out.strip():
+        log("!! his mind returned nothing (shim/Claude error or empty) — check the shim on :8599")
+    else:
+        log("mind: " + out.replace("\n", " ")[:220])
+    d = {"decision": "YES" if force else "NO", "kind": "self", "prompt": "", "say": ""}
     cur = None
     for line in out.splitlines():
         s = line.strip(); u = s.upper()
@@ -423,7 +430,7 @@ def main():
         log("quiet hours — not now"); return
     if cooldown_active() and not FORCE:
         log("within cooldown — holding"); return
-    d = decide()
+    d = decide(FORCE)
     if d["decision"] != "YES" and not FORCE:
         log("he doesn't feel like it right now (decision=%s)" % d["decision"]); return
     prompt = d["prompt"] or "The man looks toward the camera with a slow, warm smile."
