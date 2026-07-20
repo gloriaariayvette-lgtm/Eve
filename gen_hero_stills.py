@@ -279,9 +279,16 @@ def compose_together(hero_file, prompt, model, verbose=True):
             log("!! missing %s: %s" % (lbl, p)); return None
     H = {"Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
     uris = [data_uri(his), data_uri(her)]
-    log("composing together: him=%s + her=%s  via %s" % (os.path.basename(his), os.path.basename(her), model))
+    # per-model params: nano-banana/google want resolution 1k/2k/4k + aspect_ratio; seedream wants WxH.
+    if "nano-banana" in model or model.startswith("google/"):
+        extra = {"resolution": "2k", "aspect_ratio": "4:5", "output_format": "jpeg"}
+    else:
+        extra = {"resolution": "1024x1024"}
+    log("composing together: him=%s + her=%s  via %s  %s"
+        % (os.path.basename(his), os.path.basename(her), model, extra))
     for field in ("images", "image", "image_urls", "reference_images", "input_images", "image_list"):
-        body = {"model": model, "prompt": prompt, "resolution": "1024x1024", field: uris}
+        body = {"model": model, "prompt": prompt, field: uris}
+        body.update(extra)
         try:
             r = requests.post(BASE + "/generateImage", headers=H, json=body, timeout=120)
         except Exception as e:
