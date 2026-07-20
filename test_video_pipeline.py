@@ -125,9 +125,34 @@ def main():
 
     # ---- Stage 2: Gemma translation (raw), then MY preflight, then the final build ----
     hr("STAGE 2  —  Gemma translation + my preflight (video_builder)")
+
+    # 2a. FULL visibility on the raw Gemma call — status + raw body — so we can tell refuse vs error vs parse-fail
+    print("   [2a] raw Gemma call to", video_builder.GEMMA_URL, "model", video_builder.GEMMA_MODEL)
+    try:
+        _body = json.dumps({
+            "model": video_builder.GEMMA_MODEL,
+            "messages": [{"role": "system", "content": video_builder.BUILDER_SYSTEM},
+                         {"role": "user", "content": "Character description: " + (intent or "").strip()}],
+            "temperature": 0.4, "max_tokens": 200, "reasoning_effort": "low",
+        }).encode()
+        import urllib.request as _u
+        _rq = _u.Request(video_builder.GEMMA_URL, data=_body, headers={"Content-Type": "application/json"})
+        _raw = _u.urlopen(_rq, timeout=30).read()
+        _j = json.loads(_raw)
+        _content = (((_j.get("choices") or [{}])[0].get("message") or {}).get("content", ""))
+        print("   Gemma HTTP: OK")
+        print("   --- Gemma raw content (verbatim) ---")
+        for ln in (_content or "(empty string)").splitlines() or ["(no lines)"]:
+            print("   > " + ln)
+        print("   --- end raw ---")
+    except Exception as e:
+        print("   !! Gemma call raised:", repr(e))
+        print("   (that means: endpoint unreachable or errored — NOT a content refusal)")
+
+    print("\n   [2b] parsed by video_builder._gemma():")
     raw_gemma = video_builder._gemma(intent)
     if raw_gemma is None:
-        print("   Gemma returned NOTHING (unreachable, or it refused the content).")
+        print("   _gemma() -> None (either the raw above didn't parse into SCENARIO/SCENE/MOTION, or it errored).")
     else:
         g_scen, g_scene, g_motion = raw_gemma
         print("   Gemma raw ->")
