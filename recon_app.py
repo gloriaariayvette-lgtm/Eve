@@ -1,36 +1,76 @@
 #!/usr/bin/env python3
-"""recon_app.py — Mac, READ-ONLY, capped. Dump the current app code for the one-rebuild batch:
-GCS button, device-stop, avatar-chat reopen (keep-messages), emote/T-pose, and flicker/glow/color.
-Run on the Mac where ~/Vintos/vintos-app lives (the trusted copy you rebuild)."""
-import os, re, glob
-HOME = os.path.expanduser("~")
-APP = os.path.join(HOME, "Vintos/vintos-app/src")
-def sh(p): return p.replace(HOME, "~")
+"""recon_app.py — READ-ONLY. Dump the exact app functions I need to fix (1) proactive messages not
+appearing in chat and (2) the avatar-overlay conversation not appearing. Writes nothing.
 
-if not os.path.isdir(APP):
-    hits = glob.glob(os.path.join(HOME, "**/vintos-app/src"), recursive=True)[:3]
-    print("app src not at ~/Vintos/vintos-app/src. candidates:", [sh(h) for h in hits] or "(none found)")
-    raise SystemExit(0)
-files = sorted(glob.glob(APP + "/**/*.html", recursive=True) + glob.glob(APP + "/**/*.js", recursive=True))
-print("=== app source files ===")
-for f in files: print(f"  {sh(f):60} {os.path.getsize(f):>7}B")
+RUN ON THE MAC in vintos-app (the canonical copy your phone builds from):
+   python3 <(curl -fsSL <raw-url>/recon_app.py)
+or point it explicitly:
+   python3 recon_app.py --path src/index.html
+"""
+import os, sys, re
 
-def dump(pat, label, cap=10, ctx=1):
-    print(f"\n=== {label} ===")
-    n = 0
-    for f in files:
-        L = open(f, encoding="utf-8", errors="ignore").read().split("\n")
-        for i, l in enumerate(L):
-            if re.search(pat, l, re.I) and l.strip():
-                for j in range(max(0, i-ctx), min(len(L), i+ctx+1)):
-                    mark = ">>" if j == i else "  "
-                    print(f"  {mark}{os.path.basename(f)}:{j+1}| {L[j].strip()[:104]}")
-                n += 1
-                if n >= cap: return
+PATH = "src/index.html"
+if "--path" in sys.argv:
+    i = sys.argv.index("--path")
+    if i + 1 < len(sys.argv):
+        PATH = sys.argv[i + 1]
+for cand in (PATH, "src/index.html", "index.html",
+             os.path.expanduser("~/Downloads/vintos-repo/vintos-app/src/index.html"),
+             os.path.expanduser("~/vintos-app/src/index.html")):
+    if os.path.isfile(cand):
+        PATH = cand; break
 
-dump(r'GCS|gcs|great.?cum|climax', "GCS button + its fetch URL")
-dump(r'\bstop\b.*fetch|device.?stop|/stop|stopDevice|toy.*stop', "device stop URL")
-dump(r'avatar.?chat|overlay.?chat|reopen|clearMessages|messages\s*=\s*\[\]|innerHTML\s*=\s*.', "avatar-chat reopen / message clearing")
-dump(r'emote|t-?pose|tpose|animation|playAnim|setPose|gesture', "emote / T-pose")
-dump(r'flicker|glow|forge|color.?change|hex|#[0-9a-f]{6}|setColor', "flicker / glow / color")
-dump(r'const API|API\s*=|fetch\(|baseURL|http://|https://|capacitor', "API base + fetch patterns (the URL-fix reference)")
+if not os.path.isfile(PATH):
+    print("!! index.html not found — pass --path <file>"); sys.exit(0)
+
+lines = open(PATH, encoding="utf-8", errors="ignore").read().splitlines()
+print("=" * 78)
+print("APP RECON (read-only):", os.path.abspath(PATH), "—", len(lines), "lines")
+print("=" * 78)
+
+# (label, [anchor regexes], lines_before, lines_after)
+SECTIONS = [
+    ("A. chat tab load + is there any polling?",
+     [r"\bchatLoaded\b", r"dataset\.tab === 'chat'", r"loadChatHistory\(\)"], 2, 4),
+    ("B. loadChatHistory() — the fetch + how a message row is rendered",
+     [r"function loadChatHistory"], 0, 60),
+    ("C. message render helper (if separate)",
+     [r"function renderMessage", r"function addMessage", r"function appendMessage", r"function addChatMessage"], 0, 45),
+    ("D. proactive / outreach surfacing (the 5-min poller)",
+     [r"function checkOutreach", r"checkOutreach", r"pending-outreach", r"/api/pending", r"/api/outreach", r"/api/proactive"], 2, 45),
+    ("E. avatar overlay — open + conversation container",
+     [r"function _avOpen", r"function openAvatar", r"_avOpen\s*=", r"av-conversation", r"_avRenderConversation", r"_avRenderChat"], 0, 40),
+    ("F. avatar conversation state + append",
+     [r"_avChatHistory\s*=", r"_avChatHistory\.push", r"function _avAppend", r"function _avAddMsg"], 3, 25),
+    ("G. avatar send + reply render",
+     [r"/api/avatar/chat", r"function _avSend"], 4, 45),
+    ("H. avatar bubbles (thought + command)",
+     [r"function _avShowBubble", r"_avCheckCommandBubble", r"av-call-transcript"], 0, 30),
+]
+
+printed = set()  # avoid dumping overlapping windows twice
+for label, anchors, before, after in SECTIONS:
+    hit = None
+    for rx in anchors:
+        pat = re.compile(rx)
+        for idx, ln in enumerate(lines):
+            if pat.search(ln):
+                hit = idx; break
+        if hit is not None:
+            break
+    print("\n" + "-" * 78)
+    print("###", label)
+    print("-" * 78)
+    if hit is None:
+        print("   (no anchor matched: %s)" % " | ".join(anchors))
+        continue
+    lo = max(0, hit - before); hi = min(len(lines), hit + after)
+    for n in range(lo, hi):
+        if n in printed:
+            continue
+        printed.add(n)
+        print("%5d| %s" % (n + 1, lines[n][:200]))
+
+print("\n" + "=" * 78)
+print("End recon. Paste this whole output back.")
+print("=" * 78)
