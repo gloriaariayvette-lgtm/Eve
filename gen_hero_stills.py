@@ -244,6 +244,28 @@ def list_models(filter_kw=None):
                 log("   " + i)
 
 
+def fetch_schema(model):
+    """Print a model's example request + input schema (Atlas hosts them as static JSON, reachable from
+    Aegis). Reveals the exact valid params so we stop guessing."""
+    requests = _import_requests()
+    slug = model.replace("/", "-")
+    got = False
+    for kind in ("example", "schema"):
+        url = "https://static.atlascloud.ai/model/%s/%s.json" % (kind, slug)
+        try:
+            r = requests.get(url, timeout=30)
+            if r.status_code == 200:
+                got = True
+                log("\n=== %s  (%s) ===" % (kind.upper(), url))
+                log(r.text[:4000])
+            else:
+                log("  %s -> HTTP %s" % (url, r.status_code))
+        except Exception as e:
+            log("  %s -> %s" % (url, e))
+    if not got:
+        log("\nNo static JSON found for '%s'. Double-check the id from --list-models." % model)
+
+
 def compose_together(hero_file, prompt, model, verbose=True):
     """Fuse his hero + her photo into one hero-together.jpg. Auto-probes the multi-image field name
     (submit-rejections are free) until Atlas accepts two references, then generates."""
@@ -330,6 +352,13 @@ def main():
     log("cozy model: %s | spicy/zoomed model: %s | face-ref: %s | hero: %s"
         % (override or IMG_MODEL, override or SPICY_MODEL, "yes" if use_ref else "no",
            HERO if os.path.exists(HERO) else "(none yet)"))
+
+    if "--schema" in args:
+        j = args.index("--schema")
+        m = args[j + 1] if (j + 1 < len(args) and not args[j + 1].startswith("--")) else "google/nano-banana-2/reference-to-image"
+        log("fetching request schema/example for: %s" % m)
+        fetch_schema(m)
+        return
 
     if "--compose" in args:
         hero_file = args[args.index("--hero") + 1] if "--hero" in args else None
