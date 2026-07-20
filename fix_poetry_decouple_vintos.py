@@ -37,7 +37,7 @@ NEW = (
     "    context_parts = []\n"
     "    # DECOUPLED from dream + recent-journal: those are the metaphor-contaminated produced-content feeds\n"
     "    # that made poetry re-concentrate the day's fixation and amplify it back into daily-creative. Poetry\n"
-    "    # now draws from her emotional state, real events, taste, and Gloria — not the ruminative journal/dream.\n"
+    "    # now draws from his emotional state, real events, taste, and Gloria — not the ruminative journal/dream.\n"
     "    if blush:\n"
     "        context_parts.append(f\"A recent moment of self-correction:\\n{blush}\")\n"
 )
