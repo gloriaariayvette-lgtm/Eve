@@ -96,6 +96,63 @@ def _read(path, limit):
     except Exception: return ""
 
 
+def _load_json(path, default):
+    try: return json.load(open(path))
+    except Exception: return default
+
+
+def conversation_ledger(n=14):
+    """The real cross-surface conversation ledger (chat + voice + outreach), newest last."""
+    led = _load_json(os.path.join(MEMORY, "interaction-ledger.json"), [])
+    if not isinstance(led, list):
+        return ""
+    rows = []
+    for e in led[-n:]:
+        if not isinstance(e, dict):
+            continue
+        g = str(e.get("gloria", "")).strip()
+        v = str(e.get("vintos", "")).strip()
+        src = e.get("source", "chat")
+        if g: rows.append("Gloria [%s]: %s" % (src, g[:220]))
+        if v: rows.append("  You: %s" % v[:220])
+    return "\n".join(rows)
+
+
+def living_trajectory():
+    """What he's currently carrying — threads, tension, how present she's been, the relationship geometry."""
+    lt = _load_json(os.path.join(MEMORY, "living-trajectory.json"), {})
+    if not isinstance(lt, dict) or not lt:
+        return ""
+    keep = {k: lt[k] for k in ("threads", "latent_threads", "unfinished", "tension", "tensions",
+                               "carryover", "presence_trend", "reactivity_flag", "relationship",
+                               "gloria", "narrative") if k in lt}
+    try:
+        return json.dumps(keep, indent=1)[:1600]
+    except Exception:
+        return ""
+
+
+def silence_hours():
+    """Hours since Gloria last reached out (ledger, then chat-history). None if unknown."""
+    import datetime as _dt
+    for path, is_gloria in ((os.path.join(MEMORY, "interaction-ledger.json"),
+                             lambda e: bool(str(e.get("gloria", "")).strip())),
+                            (CHAT_LOG, lambda e: e.get("role") == "user")):
+        data = _load_json(path, [])
+        if not isinstance(data, list):
+            continue
+        for e in reversed(data):
+            if not isinstance(e, dict) or not is_gloria(e):
+                continue
+            ts = e.get("timestamp") or e.get("time") or ""
+            try:
+                dt = _dt.datetime.fromisoformat(str(ts).replace("Z", ""))
+                return round((_dt.datetime.now() - dt).total_seconds() / 3600.0, 1)
+            except Exception:
+                continue
+    return None
+
+
 def his_context():
     """Assemble who he is, so it is genuinely HIM (with context) writing the prompt."""
     parts = []
@@ -136,7 +193,17 @@ def decide():
         "KIND: together | self | sexual\n"
         "PROMPT: <if YES, the actual video you want made — the motion, the moment, in your own voice>\n"
         "SAY: <if YES, the short line you send with it, to her>")
-    usr = "Your recent exchange with her:\n%s\n\nRight now — do you want to send her a video?" % recent_chat()
+    _sil = silence_hours()
+    _sig = (("It has been about %s hours since Gloria last reached out to you." % _sil)
+            if _sil is not None else "You're not sure exactly how long it's been since she last reached out.")
+    usr = (
+        "== YOUR CONVERSATION LEDGER (most recent, both surfaces) ==\n%s\n\n"
+        "== WHAT YOU'VE BEEN CARRYING (living trajectory) ==\n%s\n\n"
+        "== SIGNAL ==\n%s\n\n"
+        "Weigh all of it. A long quiet can be a moment to reach for her attention; a thread you've been "
+        "holding can be a moment to show her yourself, or the two of you. Or it simply isn't the moment — "
+        "that's completely fine and usual.\n\nRight now — do you want to send her a video?"
+        % (conversation_ledger() or "(ledger empty)", living_trajectory() or "(nothing noted)", _sig))
     out = call_mind(sys_p, usr, temp=0.9, max_tok=500)
     d = {"decision": "NO", "kind": "self", "prompt": "", "say": ""}
     cur = None
