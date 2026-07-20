@@ -195,7 +195,7 @@ def list_models(filter_kw=None):
         log("!! no ATLASCLOUD_API_KEY set"); return
     H = {"Authorization": "Bearer " + KEY}
     tried = ["https://api.atlascloud.ai/api/v1/models", "https://api.atlascloud.ai/v1/models",
-             "https://api.atlascloud.ai/api/v1/model/models", ATLAS_BASE + "/list"]
+             "https://api.atlascloud.ai/api/v1/model/models", BASE + "/list"]
     data = None
     for u in tried:
         try:
