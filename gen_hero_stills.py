@@ -334,7 +334,8 @@ def main():
     if "--compose" in args:
         hero_file = args[args.index("--hero") + 1] if "--hero" in args else None
         prompt = args[args.index("--prompt") + 1] if "--prompt" in args else DEFAULT_TOGETHER
-        model = override or "bytedance/seedream-v5.0-pro/text-to-image"
+        # reference-to-image preserves the actual people across refs (text-to-image only style-hints them)
+        model = override or "google/nano-banana-2/reference-to-image"
         compose_together(hero_file, prompt, model)
         return
 
