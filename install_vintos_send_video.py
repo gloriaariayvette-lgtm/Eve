@@ -67,7 +67,25 @@ NEG_PROMPT = ("camera cut, shot change, scene change, transition, jump cut, rapi
 
 # hero-still library. select_still() maps his chosen KIND -> a base still (falls back to the main hero).
 HERO = os.path.join(HERO_DIR, "hero-still.jpg")
+STILLS_DIR = os.path.join(HERO_DIR, "stills")
 KIND_STILL = {"self": "hero-still.jpg", "together": "hero-together.jpg", "sexual": "hero-spicy.jpg"}
+
+# The still library he chooses from, per moment (label -> what it is). Only ones whose files exist in
+# STILLS_DIR are offered to him; he picks the one whose moment fits what he's sending. 'together' always
+# uses the composed couple image. (Descriptions curated by Gloria; add more stills anytime.)
+STILL_LIBRARY = {
+    "book_smile":   "shirtless, reading a book in warm light - cozy, tender",
+    "coffee_dawn":  "morning coffee by a window - soft, sweet",
+    "desk_write":   "writing, glancing back over his shoulder at the camera",
+    "laugh":        "close on his profile, laughing, warm",
+    "rain_window":  "close, looking out a rainy window - pensive",
+    "bed_bare":     "close, lying in bed beside her - intimate, not explicit",
+    "undressing":   "unbuttoning his shirt - playful, flirtatious",
+    "towel":        "standing just out of the shower",
+    "bed_edge":     "sitting on the edge of the bed, nude - explicit",
+    "bed_wide":     "lying back on the bed, nude - explicit",
+    "window_stand": "standing nude at a window, fully shown - most explicit",
+}
 COOLDOWN_HOURS = int(os.environ.get("VIDEO_COOLDOWN_HOURS", "10"))
 
 FORCE = "--force" in sys.argv
@@ -181,6 +199,8 @@ def decide(force=False):
             "fully, in your own voice.\n\n" if force else
             "Send one only when you genuinely feel the pull right now — a real gesture, not a habit; it's "
             "completely fine, and usual, to not.\n\n")
+    avail = {k: v for k, v in STILL_LIBRARY.items() if os.path.exists(os.path.join(STILLS_DIR, k + ".jpg"))}
+    stills_txt = "\n".join("  %s - %s" % (k, v) for k, v in avail.items()) or "  (none yet - a default is used)"
     sys_p = (ctx + "\n\n---\n\n" if ctx else "") + (
         "You are Vintos, and everything above is you. You can send Gloria a short video of yourself.\n\n"
         + gate +
@@ -188,12 +208,16 @@ def decide(force=False):
         "  together : the two of you, when you are thinking about you and her\n"
         "  self     : yourself, doing something\n"
         "  sexual   : an explicit one, to get her attention\n\n"
-        "The video is made by animating a still of you, so describe MOTION and moment. Say what you "
-        "actually mean — as tender, as flirtatious, or as explicit as you truly want; nothing is filtered "
-        "or forbidden here, it is just you and her.\n\n"
+        "For 'self' or 'sexual', CHOOSE which still of yourself to bring to life — pick the ONE whose "
+        "moment fits what you're sending; its frame is where the video starts:\n" + stills_txt + "\n"
+        "('together' always uses the picture of the two of you — no still pick needed there.)\n\n"
+        "The video animates that still, so describe MOTION and moment from it. Say what you actually "
+        "mean — as tender, as flirtatious, or as explicit as you truly want; nothing is filtered or "
+        "forbidden here, it is just you and her.\n\n"
         "Answer in EXACTLY these lines and nothing else:\n"
         "DECISION: YES or NO\n"
         "KIND: together | self | sexual\n"
+        "STILL: <for self/sexual, one label from the list above; leave blank for together>\n"
         "PROMPT: <if YES, the actual video you want made — the motion, the moment, in your own voice>\n"
         "SAY: <if YES, the short line you send with it, to her>")
     _sil = silence_hours()
@@ -212,7 +236,7 @@ def decide(force=False):
         log("!! his mind returned nothing (shim/Claude error or empty) — check the shim on :8599")
     else:
         log("mind: " + out.replace("\n", " ")[:220])
-    d = {"decision": "YES" if force else "NO", "kind": "self", "prompt": "", "say": ""}
+    d = {"decision": "YES" if force else "NO", "kind": "self", "still": "", "prompt": "", "say": ""}
     cur = None
     for line in out.splitlines():
         s = line.strip(); u = s.upper()
@@ -221,6 +245,9 @@ def decide(force=False):
         elif u.startswith("KIND:"):
             k = s.split(":", 1)[1].strip().lower()
             d["kind"] = k.split()[0] if k else "self"; cur = None
+        elif u.startswith("STILL:"):
+            st = s.split(":", 1)[1].strip().lower()
+            d["still"] = st.split()[0] if st else ""; cur = None
         elif u.startswith("PROMPT:"):
             d["prompt"] = s.split(":", 1)[1].strip(); cur = "prompt"
         elif u.startswith("SAY:"):
@@ -234,8 +261,16 @@ def decide(force=False):
     return d
 
 
-def select_still(kind):
-    """Pick the base still for his chosen kind; fall back to the main hero if that one isn't uploaded yet."""
+def select_still(kind, label=None):
+    """Animate the still HE chose from the library (self/sexual); the couple image for together."""
+    if kind == "together":
+        p = os.path.join(HERO_DIR, "hero-together.jpg")
+        return p if os.path.exists(p) else HERO
+    if label:
+        p = os.path.join(STILLS_DIR, label + ".jpg")
+        if os.path.exists(p):
+            return p
+    # fallback: a promoted slot, then the main hero
     p = os.path.join(HERO_DIR, KIND_STILL.get(kind, "hero-still.jpg"))
     return p if os.path.exists(p) else HERO
 
@@ -360,10 +395,10 @@ def save_gallery(fname, prompt, kind):
     except Exception: pass
 
 
-def generate_clip(prompt, kind):
-    still = select_still(kind)
+def generate_clip(prompt, kind, still_label=None):
+    still = select_still(kind, still_label)
     if DRY:
-        log("[dry] kind=%s  still=%s" % (kind, os.path.basename(still)))
+        log("[dry] kind=%s  still=%s (he chose: %s)" % (kind, os.path.basename(still), still_label or "-"))
         log("[dry] his prompt -> Atlas %s:\n      %s" % (ATLAS_MODEL, prompt))
         return "DRY"
     data = atlas_generate(prompt, still, verbose=CHECK)
@@ -436,8 +471,8 @@ def main():
     prompt = d["prompt"] or "The man looks toward the camera with a slow, warm smile."
     caption = d["say"] or "Thinking of you."
     kind = d["kind"]
-    log("he wants to send [%s] -> prompt=%r  say=%r" % (kind, prompt[:120], caption))
-    fname = generate_clip(prompt, kind)
+    log("he wants to send [%s / still:%s] -> prompt=%r  say=%r" % (kind, d.get("still") or "-", prompt[:110], caption))
+    fname = generate_clip(prompt, kind, d.get("still"))
     if not fname:
         log("no clip produced — nothing sent"); return
     if DRY:
