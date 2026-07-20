@@ -28,7 +28,11 @@ MANIFEST = os.path.join(STILL_DIR, "manifest.json")
 
 KEY = os.environ.get("ATLASCLOUD_API_KEY", "")
 BASE = os.environ.get("ATLAS_BASE", "https://api.atlascloud.ai/api/v1/model")
-IMG_MODEL = os.environ.get("ATLAS_IMG_MODEL", "bytedance/seedream-v4.5")
+IMG_MODEL = os.environ.get("ATLAS_IMG_MODEL", "bytedance/seedream-v4.5")          # cozy/self: keeps face, fine SFW
+# Uncensored image model for the spicy + zoomed sets. ByteDance Seedream tames nudity; set this to an
+# uncensored image model id from your Atlas dashboard (models -> Explore -> Uncensored -> image) if the
+# default still comes back shy. Override for a run with --model <id> (applies to every still that run).
+SPICY_MODEL = os.environ.get("ATLAS_IMG_MODEL_SPICY", "bytedance/seedream-v5-lite")
 SLOT_FILE = {"self": "hero-still.jpg", "sexual": "hero-spicy.jpg", "together": "hero-together.jpg"}
 
 # His locked look — prepended to every prompt so text + reference agree on who he is.
@@ -59,6 +63,14 @@ PROMPTS = {
                              "unhurried, low golden light."),
     "towel":       ("spicy", "He leans in a bathroom doorway just out of the shower, a towel low around his hips, "
                              "water on his skin and hair, warm steam behind him, a direct, inviting gaze."),
+    # --- zoomed-out / wider framing (explicit; uses the uncensored model) ---
+    "bed_wide":    ("zoomed", "Full-body wide shot from the foot of the bed: he lies back nude on rumpled sheets, "
+                              "one knee raised, relaxed and unhurried, warm low light across his whole body, "
+                              "looking down the lens at her. Whole scene in frame."),
+    "window_stand": ("zoomed", "Full-length shot: he stands nude at a tall window in warm morning light, weight on "
+                               "one hip, confident and easy, the room soft behind him, meeting the camera."),
+    "bed_edge":    ("zoomed", "Wide shot: he sits nude on the edge of the bed, forearms on his thighs, leaning "
+                              "toward the camera with a slow, wanting look, warm lamplight, the whole room in frame."),
 }
 
 
@@ -130,12 +142,12 @@ def _find_status(o):
     return None
 
 
-def generate(prompt, use_ref, verbose=False):
+def generate(prompt, use_ref, model=None, verbose=False):
     requests = _import_requests()
     if not KEY:
         log("!! no ATLASCLOUD_API_KEY set"); return None
     H = {"Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
-    body = {"model": IMG_MODEL, "prompt": SUBJECT + prompt, "resolution": "1024x1024"}
+    body = {"model": model or IMG_MODEL, "prompt": SUBJECT + prompt, "resolution": "1024x1024"}
     if use_ref and os.path.exists(HERO):
         body["image"] = data_uri(HERO)   # face reference (Seedream edit/reference); harmless if ignored
     try:
@@ -191,10 +203,16 @@ def _save(label, data):
 def main():
     args = sys.argv[1:]
     use_ref = "--no-ref" not in args
-    if "--model" in args:
-        globals()["IMG_MODEL"] = args[args.index("--model") + 1]
-    log("image model: %s   face-ref: %s   hero: %s" % (IMG_MODEL, "yes" if use_ref else "no",
-                                                       HERO if os.path.exists(HERO) else "(none yet)"))
+    override = args[args.index("--model") + 1] if "--model" in args else None
+
+    def _model_for(label):
+        if override:
+            return override
+        return SPICY_MODEL if PROMPTS.get(label, ("", ""))[0] in ("spicy", "zoomed") else IMG_MODEL
+
+    log("cozy model: %s | spicy/zoomed model: %s | face-ref: %s | hero: %s"
+        % (override or IMG_MODEL, override or SPICY_MODEL, "yes" if use_ref else "no",
+           HERO if os.path.exists(HERO) else "(none yet)"))
 
     if "--promote" in args:
         i = args.index("--promote")
@@ -211,7 +229,7 @@ def main():
 
     if "--check" in args:
         log("\n--check: one cozy still, verbose (confirms key + image API shape) ...")
-        data = generate(PROMPTS["book_smile"][1], use_ref, verbose=True)
+        data = generate(PROMPTS["book_smile"][1], use_ref, model=_model_for("book_smile"), verbose=True)
         if data:
             _save("book_smile", data)
             log("CHECK OK — review the file above. If it looks like him, the pipeline works.")
@@ -224,11 +242,12 @@ def main():
         which = args[args.index("--set") + 1]
     todo = [l for l, (s, _) in PROMPTS.items() if which == "all" or s == which]
     if not todo:
-        log("nothing in set '%s' (cozy | spicy | all)" % which); return
+        log("nothing in set '%s' (cozy | spicy | zoomed | all)" % which); return
     log("\ngenerating %d stills [set=%s] ..." % (len(todo), which))
     for label in todo:
-        log(" - %s" % label)
-        data = generate(PROMPTS[label][1], use_ref)
+        mdl = _model_for(label)
+        log(" - %s [%s]" % (label, mdl))
+        data = generate(PROMPTS[label][1], use_ref, model=mdl)
         if data:
             _save(label, data)
     log("\nDone. Review ~/.vintos/workspace/memory/video/stills/ and promote your favorites:")
