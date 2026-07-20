@@ -1,23 +1,18 @@
 #!/usr/bin/env python3
-"""fix_want_seeder.py — ground the journal's want-seeder so it stops minting metaphor-quests. DRY-RUN unless --apply.
+"""fix_want_seeder_vintos.py — ground Vintos's want-seeder. DRY-RUN unless --apply.
 
-The seeder (idle-journal.sh, WANTEOF block) turns a journal entry into the next want. Its prompt offers
-"search the web about / watch on YouTube" and it faithfully mints "I want to research creep in materials
-science to understand my growth" — a translation-tax want that then MANUFACTURES tomorrow's metaphor material.
-The grounding gate (enrich_want + _grounded_intensity) doesn't catch these because a fake-legitimate research
-activity "grounds" them.
+His seeder (in ~/Vintos/idle-journal.sh) differs from hers: no _grounded_intensity gate — it seeds at
+intensity=3 directly on both the explicit and generated paths, via grok. So the guard hooks onto his two
+express_want calls instead of an intensity gate:
+  1. add `_is_translation_want(w)` (his register too: threshold/doorframe/cross-examine/structural/noble-exit).
+  2. explicit path: discard if the extracted want is a translation-tax want.
+  3. generated path: add `and not _is_translation_want(want)` to the seed condition.
+  4. add the same grounding clause to the want-generation prompt.
 
-Three edits inside the WANTEOF python block (no ban list — a positive grounding rule + a guard):
-  1. add `_is_translation_want(w)` — true when the want is really to find an image/analogy/physical-science
-     mirror for a feeling, or to be a material/object.
-  2. apply it at BOTH discard gates: `if _wi < 2:` -> `if _wi < 2 or _is_translation_want(want):`
-  3. add a grounding clause to the want-generation prompt: a real want is concrete/literal; a want to
-     translate or find a picture for a feeling is NONE.
+Validates with bash -n. Idempotent (sentinel). No ban list.
 
-Validates with `bash -n` before writing. Idempotent (sentinel). Velaris's idle-journal.sh.
-
-  python3 fix_want_seeder.py            # DRY RUN — prints diff + bash -n, writes nothing
-  python3 fix_want_seeder.py --apply    # backs up, patches, re-validates
+  python3 fix_want_seeder_vintos.py            # DRY RUN
+  python3 fix_want_seeder_vintos.py --apply    # backs up, patches, re-validates
 """
 import os, sys, subprocess, tempfile, difflib, datetime
 
@@ -26,32 +21,35 @@ PATH = os.path.expanduser("~/Vintos/idle-journal.sh")
 TS = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 BACKUP = PATH + ".bak-wantseed-vintos-" + TS
 
-# 1) guard helper — inserted right after the emoclaw import inside WANTEOF
 ANCHOR_IMPORT = "    from emoclaw_utils import express_want, enrich_want\n"
 GUARD_DEF = (
     "    def _is_translation_want(_w):\n"
-    "        # A real want is concrete/literal. The translation tax disguised as a want is: to find an\n"
-    "        # image/analogy/physical-science mirror for a feeling, or to be a material/object. Reject those.\n"
+    "        # A real want is concrete/literal. Translation tax disguised as a want: find an image/analogy/\n"
+    "        # physical-science mirror for a feeling, or be a material/object. Includes his register.\n"
     "        _wl = (_w or '').lower()\n"
     "        _tells = ('bridge','the ground','the floor','vessel','a stone','the weight','map the',\n"
     "                  'architecture of','the point where','narrative to justify','translate','metaphor',\n"
     "                  'image for','analogy','materials science','plastic deformation','creep','wood grain',\n"
-    "                  'so thick','let the weight','the walk itself','destination of my feelings','mirror for')\n"
+    "                  'so thick','let the weight','the walk itself','mirror for','threshold','doorframe',\n"
+    "                  'cross-examin','structural shift','noble exit')\n"
     "        return any(_t in _wl for _t in _tells)\n"
 )
 
-# 2) apply the guard at both discard gates (identical line, both occurrences)
-GATE_OLD = "        if _wi < 2:\n"
-GATE_NEW = "        if _wi < 2 or _is_translation_want(want):\n"
+EXPLICIT_ANCHOR = "        want = _explicit.group(0).strip()\n"
+EXPLICIT_INJECT = (
+    "        if _is_translation_want(want):\n"
+    "            print(f\"[Journal] Want discarded — translation-tax: {want[:80]}\", file=sys.stderr); sys.exit(0)\n"
+)
 
-# 3) grounding clause added to the want-generation prompt (before "If no, write NONE.")
+GEN_OLD = '    if want and want.upper() != "NONE" and want.lower().startswith("i want"):\n'
+GEN_NEW = '    if want and want.upper() != "NONE" and want.lower().startswith("i want") and not _is_translation_want(want):\n'
+
 PROMPT_ANCHOR = "If yes, write ONE sentence starting with .I want to.... Be concrete about the subject.\\nIf no, write NONE."
 PROMPT_NEW = (
     "A real want is concrete and literal: to make a specific thing, learn a specific fact, do something with "
     "Gloria, or say something to her. A want to find an image, metaphor, or physical-science analogy for how "
     "you feel — or to research a material or process as a mirror for yourself — is NOT a want; it is the "
-    "translation tax you are tired of. If the only want is to describe, translate, or find a picture for a "
-    "feeling, write NONE.\\n"
+    "translation tax. If the only want is to describe, translate, or find a picture for a feeling, write NONE.\\n"
     "If yes, write ONE sentence starting with .I want to.... Be concrete about the subject.\\nIf no, write NONE."
 )
 
@@ -64,16 +62,19 @@ def patch(text):
     if ANCHOR_IMPORT in text:
         text = text.replace(ANCHOR_IMPORT, ANCHOR_IMPORT + GUARD_DEF, 1); notes.append("guard helper inserted")
     else:
-        notes.append("import anchor NOT found — SKIPPED"); ok = False
-    n_gate = text.count(GATE_OLD)
-    if n_gate:
-        text = text.replace(GATE_OLD, GATE_NEW); notes.append(f"guard applied at {n_gate} discard gate(s)")
+        notes.append("import anchor NOT found"); ok = False
+    if EXPLICIT_ANCHOR in text:
+        text = text.replace(EXPLICIT_ANCHOR, EXPLICIT_ANCHOR + EXPLICIT_INJECT, 1); notes.append("explicit-path guard inserted")
     else:
-        notes.append("discard-gate anchor NOT found — SKIPPED"); ok = False
+        notes.append("explicit-path anchor NOT found"); ok = False
+    if GEN_OLD in text:
+        text = text.replace(GEN_OLD, GEN_NEW, 1); notes.append("generated-path guard added to condition")
+    else:
+        notes.append("generated-path anchor NOT found"); ok = False
     if PROMPT_ANCHOR in text:
         text = text.replace(PROMPT_ANCHOR, PROMPT_NEW, 1); notes.append("grounding clause added to prompt")
     else:
-        notes.append("prompt anchor NOT found — SKIPPED"); ok = False
+        notes.append("prompt anchor NOT found"); ok = False
     return text, notes, ok
 
 
@@ -89,7 +90,7 @@ def bash_n(text):
 
 def main():
     print("=" * 76)
-    print("WANT-SEEDER GROUNDING  —  %s" % ("APPLYING (backup -> %s)" % BACKUP if APPLY else "DRY RUN (writes nothing)"))
+    print("VINTOS WANT-SEEDER GROUNDING  —  %s" % ("APPLYING (backup -> %s)" % BACKUP if APPLY else "DRY RUN (writes nothing)"))
     print("=" * 76)
     if not os.path.isfile(PATH):
         print("!! not found:", PATH); return
@@ -100,7 +101,7 @@ def main():
     if new == old:
         print("\n   (no change)"); return
     if not ok:
-        print("\n   !! an anchor was missed — writing nothing (avoid a half-patch)"); return
+        print("\n   !! an anchor was missed — writing nothing (avoid half-patch)"); return
     passed, err = bash_n(new)
     print("   bash -n:", "OK" if passed else "FAIL\n" + err)
     if not passed:
