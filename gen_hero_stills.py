@@ -32,7 +32,7 @@ IMG_MODEL = os.environ.get("ATLAS_IMG_MODEL", "bytedance/seedream-v4.5")        
 # Uncensored image model for the spicy + zoomed sets. ByteDance Seedream tames nudity; set this to an
 # uncensored image model id from your Atlas dashboard (models -> Explore -> Uncensored -> image) if the
 # default still comes back shy. Override for a run with --model <id> (applies to every still that run).
-SPICY_MODEL = os.environ.get("ATLAS_IMG_MODEL_SPICY", "bytedance/seedream-v5-lite")
+SPICY_MODEL = os.environ.get("ATLAS_IMG_MODEL_SPICY", "bytedance/seedream-v5.0-pro/text-to-image")
 SLOT_FILE = {"self": "hero-still.jpg", "sexual": "hero-spicy.jpg", "together": "hero-together.jpg"}
 
 # His locked look — prepended to every prompt so text + reference agree on who he is.
@@ -221,7 +221,7 @@ def list_models(filter_kw=None):
         elif isinstance(o, list):
             for v in o:
                 _walk(v)
-        elif isinstance(o, str) and "/" in o:
+        elif isinstance(o, str) and "/" in o and not o.startswith("http"):
             ids.append(o)
 
     _walk(data)
