@@ -17,6 +17,8 @@ promote your favorites into the slots the sender uses.
 
   # DYNAMIC scene — place him full-body into ANY scene he describes, face-locked to the hero (Grok edit):
   python3 gen_hero_stills.py --scene "on a blanket in the park eating watermelon under an oak tree" --name park
+  # ...then ANIMATE that still into a clip (Grok image-to-video):
+  python3 gen_hero_stills.py --animate park           # optional: --motion "reaches for another slice, laughs"
 
 Options: --no-ref (pure text-to-image, don't face-lock to the hero), --model <id> (override image model).
 """
@@ -43,6 +45,8 @@ SPICY_MODEL = os.environ.get("ATLAS_IMG_MODEL_SPICY", "bytedance/seedream-v5.0-p
 # arbitrary new scene ("on a blanket in the park eating watermelon under an oak tree"). This is the
 # model his mind will drive for dynamic, freely-described non-explicit scenes.
 SCENE_MODEL = os.environ.get("ATLAS_SCENE_MODEL", "xai/grok-imagine-image/edit")
+# Grok image-to-video animates a still (his scene still) into motion — the second half of the dynamic loop.
+GROK_VIDEO_MODEL = os.environ.get("ATLAS_GROK_VIDEO", "xai/grok-imagine-video-v1.5/image-to-video")
 SLOT_FILE = {"self": "hero-still.jpg", "sexual": "hero-spicy.jpg", "together": "hero-together.jpg"}
 
 # His locked look — prepended to every prompt so text + reference agree on who he is.
@@ -271,6 +275,72 @@ def scene_image(desc, model=None, verbose=True):
         return requests.get(val, timeout=120).content if kind == "url" else base64.b64decode(val)
     except Exception as e:
         log("image fetch/decode failed: %s" % e); return None
+
+
+def _find_video(o):
+    """Find a video output: a URL with a video extension (mp4/webm/mov)."""
+    if isinstance(o, str):
+        low = o.lower().split("?")[0]
+        if o.startswith("http") and (low.endswith(".mp4") or low.endswith(".webm") or low.endswith(".mov")):
+            return o
+        return None
+    if isinstance(o, dict):
+        for v in o.values():
+            r = _find_video(v)
+            if r: return r
+    if isinstance(o, list):
+        for v in o:
+            r = _find_video(v)
+            if r: return r
+    return None
+
+
+def video_from_still(still_path, motion, model=None, verbose=True):
+    """Animate an existing still into a clip via Grok image-to-video. Returns mp4 bytes or None."""
+    requests = _import_requests()
+    if not KEY:
+        log("!! no ATLASCLOUD_API_KEY set"); return None
+    if not os.path.exists(still_path):
+        log("!! still not found: %s" % still_path); return None
+    m = model or GROK_VIDEO_MODEL
+    H = {"Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
+    prompt = (motion or "Gentle natural motion true to the scene — subtle movement, breathing, a small shift "
+              "of weight and a warm look, the light alive around him. Keep his face exactly as in the image.")
+    body = {"model": m, "prompt": prompt, "image_url": data_uri(still_path),
+            "resolution": "720p", "duration": 5}
+    log("animating %s via %s" % (os.path.basename(still_path), m))
+    try:
+        r = requests.post(BASE + "/generateVideo", headers=H, json=body, timeout=120)
+    except Exception as e:
+        log("submit error: %s" % e); return None
+    if verbose:
+        log("submit HTTP %s: %s" % (r.status_code, r.text[:600]))
+    if r.status_code >= 300:
+        log("submit rejected %s: %s" % (r.status_code, r.text[:300])); return None
+    try:
+        sub = r.json()
+    except Exception:
+        log("non-JSON: %s" % r.text[:200]); return None
+    vid = _find_video(sub); pid = _find_id(sub)
+    for i in range(150):  # video takes longer than a still
+        if vid or not pid:
+            break
+        time.sleep(4)
+        try:
+            pr = requests.get(BASE + "/prediction/" + pid, headers=H, timeout=30).json()
+        except Exception as e:
+            log("poll error: %s" % e); continue
+        if verbose and i < 2:
+            log("poll[%d]: %s" % (i, json.dumps(pr)[:400]))
+        if _find_status(pr) in ("failed", "error", "canceled", "cancelled"):
+            log("generation failed: %s" % json.dumps(pr)[:300]); return None
+        vid = _find_video(pr)
+    if not vid:
+        log("no video in response after polling"); return None
+    try:
+        return requests.get(vid, timeout=180).content
+    except Exception as e:
+        log("video fetch failed: %s" % e); return None
 
 
 def list_models(filter_kw=None):
@@ -528,6 +598,23 @@ def main():
             log("SCENE OK — review stills/%s.jpg. If it's him in that scene, the dynamic pipeline works." % name)
         else:
             log("SCENE FAILED — read the submit/poll output above for the exact shape to adjust.")
+        return
+
+    if "--animate" in args:
+        j = args.index("--animate")
+        label = args[j + 1] if (j + 1 < len(args) and not args[j + 1].startswith("--")) else "scene"
+        motion = args[args.index("--motion") + 1] if "--motion" in args else None
+        src = os.path.join(STILL_DIR, label + ".jpg")
+        out = os.path.join(STILL_DIR, label + ".mp4")
+        model = override if (override and "video" in override) else GROK_VIDEO_MODEL
+        log("\n--animate: turning stills/%s.jpg into motion via %s ..." % (label, model))
+        data = video_from_still(src, motion, model=model, verbose=True)
+        if data:
+            open(out, "wb").write(data)
+            log("ANIMATE OK — saved stills/%s.mp4 (%d bytes). Push it to your phone to watch:" % (label, len(data)))
+            log("   curl -T %s -H 'Filename: %s.mp4' https://ntfy.sh/vintos-gloria-9kx" % (out, label))
+        else:
+            log("ANIMATE FAILED — read the submit/poll output above for the exact shape to adjust.")
         return
 
     if "--schema" in args:
