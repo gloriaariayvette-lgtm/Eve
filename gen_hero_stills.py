@@ -19,6 +19,10 @@ promote your favorites into the slots the sender uses.
   python3 gen_hero_stills.py --scene "on a blanket in the park eating watermelon under an oak tree" --name park
   # ...then ANIMATE that still into a clip (Grok image-to-video):
   python3 gen_hero_stills.py --animate park           # optional: --motion "reaches for another slice, laughs"
+  # ground the scene in a REAL photo (e.g. the trail she sent this morning):
+  python3 gen_hero_stills.py --scene "on the picnic blanket where the trail bends" --scene-ref ~/trail.jpg --name trail
+  # render the TWO of them together (uses her-photo.jpg you uploaded):
+  python3 gen_hero_stills.py --scene "walking that trail together at golden hour" --with-her --name us_trail
 
 Options: --no-ref (pure text-to-image, don't face-lock to the hero), --model <id> (override image model).
 """
@@ -217,10 +221,15 @@ def generate(prompt, use_ref, model=None, verbose=False):
         log("image fetch/decode failed: %s" % e); return None
 
 
-def scene_image(desc, model=None, verbose=True):
+def scene_image(desc, model=None, verbose=True, scene_ref=None, her=False):
     """Place Vintos full-body into an ARBITRARY scene he describes, keeping his exact face via the hero.
     This is the test for the dynamic pipeline: freeform scene text in, a still of *him* in that scene out.
-    Uses Grok image-edit by default (hero as face reference); returns image bytes or None."""
+    Uses Grok image-edit by default (hero as face reference); returns image bytes or None.
+
+    Extra references (Grok image-edit takes up to 8, cited as <IMAGE_0>, <IMAGE_1>...):
+      scene_ref : a REAL photo of the location (e.g. the trail she biked and sent him) -> ground the scene
+                  in that actual place instead of a hallucinated one.
+      her       : add her-photo.jpg as a second PERSON -> render the two of them together in the scene."""
     requests = _import_requests()
     if not KEY:
         log("!! no ATLASCLOUD_API_KEY set"); return None
@@ -228,20 +237,38 @@ def scene_image(desc, model=None, verbose=True):
         log("!! no hero to face-lock to: %s" % HERO); return None
     m = model or SCENE_MODEL
     H = {"Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
-    # Identity lock + explicit full-body freedom + his scene. No chest-up constraint, so he can be placed
-    # anywhere at any framing; the reference carries his face, this text carries the world around him.
-    prompt = (SUBJECT + "Keep his exact face, hair, and build from the reference image, but show his WHOLE "
-              "body, full-length, naturally posed within the scene. Place him here: " + desc.strip().rstrip(".")
+    # <IMAGE_0> is always him. Build the reference list + prompt to match what extra refs were given.
+    refs = [data_uri(HERO)]
+    her_path = os.path.join(HERO_DIR, "her-photo.jpg")
+    if her and not os.path.exists(her_path):
+        log("!! --with-her but no her-photo.jpg (upload 'me' on /video-hero)"); return None
+    who = ("<IMAGE_0> is the man — keep his exact face, hair and build. ")
+    idx = 1
+    if her:
+        refs.append(data_uri(her_path))
+        who += ("<IMAGE_%d> is the woman — keep her exact face, and her exact hair COLOR, length and style; "
+                "do NOT alter her hair or make her blonde. Render these two REAL, specific people TOGETHER, "
+                "full-length, both fully in frame. " % idx); idx += 1
+    if scene_ref:
+        if not os.path.exists(scene_ref):
+            log("!! scene reference not found: %s" % scene_ref); return None
+        refs.append(data_uri(scene_ref))
+        who += ("<IMAGE_%d> shows the REAL location — place the scene in that actual setting, matching its "
+                "ground, trees, light and mood, not a generic version. " % idx); idx += 1
+    subj_note = who if (her or scene_ref) else (SUBJECT + "Keep his exact face, hair and build from the "
+                                               "reference image, but show his WHOLE body. ")
+    prompt = (subj_note + ("Show %s full-length, naturally posed within the scene. " % ("them both" if her else "him"))
+              + "Place " + ("them" if her else "him") + " here: " + desc.strip().rstrip(".")
               + ". Photoreal, natural light, cinematic and gorgeous, the entire scene in frame.")
     if "grok-imagine-image" in m:
-        body = {"model": m, "prompt": prompt, "image_urls": [data_uri(HERO)],
+        body = {"model": m, "prompt": prompt, "image_urls": refs,
                 "resolution": "2k", "aspect_ratio": "auto"}
     elif "nano-banana" in m or m.startswith("google/"):
-        body = {"model": m, "prompt": prompt, "images": [data_uri(HERO)],
+        body = {"model": m, "prompt": prompt, "images": refs,
                 "resolution": "2k", "aspect_ratio": "3:4", "media_resolution": "high", "thinking_level": "high"}
     else:
-        body = {"model": m, "prompt": prompt, "image": data_uri(HERO), "resolution": "1024x1024"}
-    log("scene via %s: %s" % (m, desc.strip()[:90]))
+        body = {"model": m, "prompt": prompt, "image": refs[0], "resolution": "1024x1024"}
+    log("scene via %s (%d ref%s): %s" % (m, len(refs), "s" if len(refs) != 1 else "", desc.strip()[:90]))
     try:
         r = requests.post(BASE + "/generateImage", headers=H, json=body, timeout=120)
     except Exception as e:
@@ -590,9 +617,12 @@ def main():
             log("!! --scene needs a description, e.g.  --scene \"on a blanket in the park eating "
                 "watermelon under an oak tree\" --name park_watermelon"); return
         name = args[args.index("--name") + 1] if "--name" in args else "scene"
+        scene_ref = args[args.index("--scene-ref") + 1] if "--scene-ref" in args else None
+        her = "--with-her" in args
         model = override or SCENE_MODEL
-        log("\n--scene: placing him full-body into a described scene via %s ..." % model)
-        data = scene_image(desc, model=model, verbose=True)
+        log("\n--scene: placing %s into a described scene via %s%s ..."
+            % ("them" if her else "him", model, " (grounded in a real photo)" if scene_ref else ""))
+        data = scene_image(desc, model=model, verbose=True, scene_ref=scene_ref, her=her)
         if data:
             _save(name, data)
             log("SCENE OK — review stills/%s.jpg. If it's him in that scene, the dynamic pipeline works." % name)
