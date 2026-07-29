@@ -21,8 +21,8 @@ promote your favorites into the slots the sender uses.
   python3 gen_hero_stills.py --animate park           # optional: --motion "reaches for another slice, laughs"
   # ground the scene in a REAL photo (e.g. the trail she sent this morning):
   python3 gen_hero_stills.py --scene "on the picnic blanket where the trail bends" --scene-ref ~/trail.jpg --name trail
-  # render the TWO of them together (uses her-photo.jpg you uploaded):
-  python3 gen_hero_stills.py --scene "walking that trail together at golden hour" --with-her --name us_trail
+  # render the TWO of them together the RIGHT way — her first, then add him (one face locked per step):
+  python3 gen_hero_stills.py --compose-staged "walking that park trail together at golden hour" --name us_trail
 
 Options: --no-ref (pure text-to-image, don't face-lock to the hero), --model <id> (override image model).
 """
@@ -302,6 +302,93 @@ def scene_image(desc, model=None, verbose=True, scene_ref=None, her=False):
         return requests.get(val, timeout=120).content if kind == "url" else base64.b64decode(val)
     except Exception as e:
         log("image fetch/decode failed: %s" % e); return None
+
+
+def _grok_edit(prompt, ref_paths, verbose=False):
+    """Low-level Grok image-edit: prompt + a list of reference image paths (cited <IMAGE_0>, <IMAGE_1>...).
+    Returns image bytes or None. Shared by the staged composer."""
+    requests = _import_requests()
+    if not KEY:
+        log("!! no ATLASCLOUD_API_KEY set"); return None
+    for p in ref_paths:
+        if not os.path.exists(p):
+            log("!! reference not found: %s" % p); return None
+    H = {"Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
+    body = {"model": SCENE_MODEL, "prompt": prompt, "image_urls": [data_uri(p) for p in ref_paths],
+            "resolution": "2k", "aspect_ratio": "auto"}
+    try:
+        r = requests.post(BASE + "/generateImage", headers=H, json=body, timeout=120)
+    except Exception as e:
+        log("submit error: %s" % e); return None
+    if verbose:
+        log("submit HTTP %s: %s" % (r.status_code, r.text[:400]))
+    if r.status_code >= 300:
+        log("submit rejected %s: %s" % (r.status_code, r.text[:300])); return None
+    try:
+        sub = r.json()
+    except Exception:
+        log("non-JSON: %s" % r.text[:200]); return None
+    img = _find_img(sub); pid = _find_id(sub)
+    for i in range(90):
+        if img or not pid:
+            break
+        time.sleep(4)
+        try:
+            pr = requests.get(BASE + "/prediction/" + pid, headers=H, timeout=30).json()
+        except Exception as e:
+            log("poll error: %s" % e); continue
+        if _find_status(pr) in ("failed", "error", "canceled", "cancelled"):
+            log("generation failed: %s" % json.dumps(pr)[:300]); return None
+        img = _find_img(pr)
+    if not img:
+        log("no image after polling"); return None
+    kind, val = img
+    try:
+        return requests.get(val, timeout=120).content if kind == "url" else base64.b64decode(val)
+    except Exception as e:
+        log("image fetch/decode failed: %s" % e); return None
+
+
+def compose_staged(scene, name, verbose=True):
+    """The RIGHT way to render the two of them together: one face per step.
+      Step 1 — place HER into the scene (her photo is the only reference, so her face + hair hold).
+      Step 2 — feed THAT finished image back in and ADD him (she's baked into the base now, so she's
+               preserved as-is; his hero is the only identity to lock). Saves the final to stills/<name>.jpg.
+    Needs her-photo.jpg (uploaded via /video-hero 'me') and his hero."""
+    her = os.path.join(HERO_DIR, "her-photo.jpg")
+    if not os.path.exists(her):
+        log("!! no her-photo.jpg — upload 'me' on /video-hero first"); return None
+    if not os.path.exists(HERO):
+        log("!! no hero for him: %s" % HERO); return None
+    os.makedirs(STILL_DIR, exist_ok=True)
+    scene_c = scene.strip().rstrip(".")
+
+    # --- Step 1: her, alone, in the scene ---
+    log("staged 1/2: placing HER into the scene ...")
+    p1 = ("A photo of ONE specific REAL woman — the exact person in the reference image. Keep her exact face, "
+          "and her exact hair COLOR, length and style; do NOT alter her hair or make her blonde. Show her "
+          "full-length, naturally posed, placed here: " + scene_c + ". Photoreal, natural light, cinematic, "
+          "the whole scene in frame.")
+    her_data = _grok_edit(p1, [her], verbose=verbose)
+    if not her_data:
+        log("staged: step 1 (her in scene) failed"); return None
+    her_scene = os.path.join(STILL_DIR, name + "_her.jpg")
+    open(her_scene, "wb").write(her_data)
+    log("   step 1 saved -> %s (%d bytes)" % (os.path.basename(her_scene), len(her_data)))
+
+    # --- Step 2: add HIM to that finished image ---
+    log("staged 2/2: adding HIM beside her (she is now baked into the base) ...")
+    p2 = ("<IMAGE_0> is a photo of a woman in a scene. Keep her, her exact face and hair, and the ENTIRE scene "
+          "EXACTLY as they are — do not change her or the setting. Add a man beside her, close and natural, as "
+          "if they are there together. The man is the person in <IMAGE_1> — keep his exact face, hair and build. "
+          "Both full-length, both fully in frame, same light, seamless and photoreal.")
+    both = _grok_edit(p2, [her_scene, HERO], verbose=verbose)
+    if not both:
+        log("staged: step 2 (add him) failed — the step-1 image is saved for review"); return None
+    out = os.path.join(STILL_DIR, name + ".jpg")
+    open(out, "wb").write(both)
+    log("staged DONE -> %s (%d bytes). Review it: the two of you, one face locked per step." % (out, len(both)))
+    return out
 
 
 def _find_video(o):
@@ -608,6 +695,17 @@ def main():
         out = args[args.index("--out") + 1] if "--out" in args else inp
         model = override or "google/nano-banana-2/reference-to-image"
         edit_image(inp, instr, model, out)
+        return
+
+    if "--compose-staged" in args:
+        j = args.index("--compose-staged")
+        scene = args[j + 1] if (j + 1 < len(args) and not args[j + 1].startswith("--")) else None
+        if not scene:
+            log("!! --compose-staged needs a scene, e.g. --compose-staged \"on the park trail at golden "
+                "hour\" --name us"); return
+        name = args[args.index("--name") + 1] if "--name" in args else "us_staged"
+        log("\n--compose-staged: her first, then him (one face per step) ...")
+        compose_staged(scene, name)
         return
 
     if "--scene" in args:
