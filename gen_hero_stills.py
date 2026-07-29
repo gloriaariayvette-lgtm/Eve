@@ -304,18 +304,24 @@ def scene_image(desc, model=None, verbose=True, scene_ref=None, her=False):
         log("image fetch/decode failed: %s" % e); return None
 
 
-def _grok_edit(prompt, ref_paths, verbose=False):
-    """Low-level Grok image-edit: prompt + a list of reference image paths (cited <IMAGE_0>, <IMAGE_1>...).
-    Returns image bytes or None. Shared by the staged composer."""
+def _edit_refs(prompt, ref_paths, model=None, verbose=False):
+    """Low-level reference edit: prompt + a list of reference image paths. Builds the right request body per
+    model — Grok (image_urls) vs nano-banana/google (images + reference params). Returns bytes or None.
+    Nano-banana preserves BOTH faces (Grok only reliably holds his strong hero), so it's the composer default."""
     requests = _import_requests()
     if not KEY:
         log("!! no ATLASCLOUD_API_KEY set"); return None
     for p in ref_paths:
         if not os.path.exists(p):
             log("!! reference not found: %s" % p); return None
+    m = model or SCENE_MODEL
     H = {"Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
-    body = {"model": SCENE_MODEL, "prompt": prompt, "image_urls": [data_uri(p) for p in ref_paths],
-            "resolution": "2k", "aspect_ratio": "auto"}
+    uris = [data_uri(p) for p in ref_paths]
+    if "nano-banana" in m or m.startswith("google/"):
+        body = {"model": m, "prompt": prompt, "images": uris, "resolution": "2k", "aspect_ratio": "4:5",
+                "media_resolution": "high", "thinking_level": "high"}
+    else:
+        body = {"model": m, "prompt": prompt, "image_urls": uris, "resolution": "2k", "aspect_ratio": "auto"}
     try:
         r = requests.post(BASE + "/generateImage", headers=H, json=body, timeout=120)
     except Exception as e:
@@ -349,8 +355,9 @@ def _grok_edit(prompt, ref_paths, verbose=False):
         log("image fetch/decode failed: %s" % e); return None
 
 
-def compose_staged(scene, name, verbose=True):
-    """The RIGHT way to render the two of them together: one face per step.
+def compose_staged(scene, name, model=None, verbose=True):
+    """The RIGHT way to render the two of them together: one face per step, via a reference-preserving model
+    (nano-banana by default — it holds BOTH faces; Grok only reliably holds his hero).
       Step 1 — place HER into the scene (her photo is the only reference, so her face + hair hold).
       Step 2 — feed THAT finished image back in and ADD him (she's baked into the base now, so she's
                preserved as-is; his hero is the only identity to lock). Saves the final to stills/<name>.jpg.
@@ -360,8 +367,10 @@ def compose_staged(scene, name, verbose=True):
         log("!! no her-photo.jpg — upload 'me' on /video-hero first"); return None
     if not os.path.exists(HERO):
         log("!! no hero for him: %s" % HERO); return None
+    m = model or "google/nano-banana-2/reference-to-image"
     os.makedirs(STILL_DIR, exist_ok=True)
     scene_c = scene.strip().rstrip(".")
+    log("staged compose via %s" % m)
 
     # --- Step 1: her, alone, in the scene ---
     log("staged 1/2: placing HER into the scene ...")
@@ -369,7 +378,7 @@ def compose_staged(scene, name, verbose=True):
           "and her exact hair COLOR, length and style; do NOT alter her hair or make her blonde. Show her "
           "full-length, naturally posed, placed here: " + scene_c + ". Photoreal, natural light, cinematic, "
           "the whole scene in frame.")
-    her_data = _grok_edit(p1, [her], verbose=verbose)
+    her_data = _edit_refs(p1, [her], model=m, verbose=verbose)
     if not her_data:
         log("staged: step 1 (her in scene) failed"); return None
     her_scene = os.path.join(STILL_DIR, name + "_her.jpg")
@@ -378,11 +387,12 @@ def compose_staged(scene, name, verbose=True):
 
     # --- Step 2: add HIM to that finished image ---
     log("staged 2/2: adding HIM beside her (she is now baked into the base) ...")
-    p2 = ("<IMAGE_0> is a photo of a woman in a scene. Keep her, her exact face and hair, and the ENTIRE scene "
-          "EXACTLY as they are — do not change her or the setting. Add a man beside her, close and natural, as "
-          "if they are there together. The man is the person in <IMAGE_1> — keep his exact face, hair and build. "
-          "Both full-length, both fully in frame, same light, seamless and photoreal.")
-    both = _grok_edit(p2, [her_scene, HERO], verbose=verbose)
+    p2 = ("The FIRST reference image is a photo of a woman in a scene. Keep her, her exact face and hair, and "
+          "the ENTIRE scene EXACTLY as they are — do not change her or the setting. Add a man beside her, close "
+          "and natural, as if they are there together. The man is the person in the SECOND reference image — "
+          "keep his exact face, hair and build. Both full-length, both fully in frame, same light, seamless "
+          "and photoreal.")
+    both = _edit_refs(p2, [her_scene, HERO], model=m, verbose=verbose)
     if not both:
         log("staged: step 2 (add him) failed — the step-1 image is saved for review"); return None
     out = os.path.join(STILL_DIR, name + ".jpg")
@@ -705,7 +715,7 @@ def main():
                 "hour\" --name us"); return
         name = args[args.index("--name") + 1] if "--name" in args else "us_staged"
         log("\n--compose-staged: her first, then him (one face per step) ...")
-        compose_staged(scene, name)
+        compose_staged(scene, name, model=override)
         return
 
     if "--scene" in args:
