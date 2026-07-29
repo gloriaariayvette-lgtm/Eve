@@ -401,6 +401,32 @@ def compose_staged(scene, name, model=None, verbose=True):
     return out
 
 
+def compose_us_scene(scene, name, model=None, verbose=True):
+    """Single-shot couple compose into an ARBITRARY scene (the path that landed her), saved to
+    stills/<name>.jpg — never touches the locked hero-together.jpg. Her first (models over-weight ref 0)."""
+    her = os.path.join(HERO_DIR, "her-photo.jpg")
+    if not os.path.exists(her):
+        log("!! no her-photo.jpg — upload 'me' on /video-hero first"); return None
+    if not os.path.exists(HERO):
+        log("!! no hero for him: %s" % HERO); return None
+    m = model or "google/nano-banana-2/reference-to-image"
+    scene_c = scene.strip().rstrip(".")
+    prompt = ("A photo of two REAL, specific people together. The WOMAN is exactly the person in the FIRST "
+              "reference image — keep her exact face and her exact hair color, length and style. The MAN is "
+              "exactly the person in the SECOND reference image — keep his exact face and build. Both "
+              "full-length, both fully in frame, close and natural together. They are here: " + scene_c +
+              ". Photoreal, natural light, cinematic and gorgeous.")
+    log("compose us-scene via %s: %s" % (m, scene_c[:80]))
+    data = _edit_refs(prompt, [her, HERO], model=m, verbose=verbose)
+    if not data:
+        log("us-scene compose failed"); return None
+    os.makedirs(STILL_DIR, exist_ok=True)
+    path = os.path.join(STILL_DIR, name + ".jpg")
+    open(path, "wb").write(data)
+    log("us-scene still saved -> %s (%d bytes)" % (path, len(data)))
+    return path
+
+
 def _find_video(o):
     """Find a video output: a URL with a video extension (mp4/webm/mov)."""
     if isinstance(o, str):
@@ -705,6 +731,30 @@ def main():
         out = args[args.index("--out") + 1] if "--out" in args else inp
         model = override or "google/nano-banana-2/reference-to-image"
         edit_image(inp, instr, model, out)
+        return
+
+    if "--us-scene" in args:
+        j = args.index("--us-scene")
+        scene = args[j + 1] if (j + 1 < len(args) and not args[j + 1].startswith("--")) else None
+        if not scene:
+            log("!! --us-scene needs a scene, e.g. --us-scene \"cooking together in a warm kitchen at "
+                "night\" --name us_kitchen"); return
+        name = args[args.index("--name") + 1] if "--name" in args else "us_scene"
+        motion = args[args.index("--motion") + 1] if "--motion" in args else None
+        log("\n--us-scene: compose the two of you into a NEW scene, then animate ...")
+        still = compose_us_scene(scene, name, model=override)
+        if not still:
+            log("us-scene: compose failed — nothing to animate"); return
+        if "--still-only" in args:
+            log("still-only: stop after compose. Review stills/%s.jpg" % name); return
+        data = video_from_still(still, motion, model=GROK_VIDEO_MODEL, verbose=True)
+        if data:
+            out = os.path.join(STILL_DIR, name + ".mp4")
+            open(out, "wb").write(data)
+            log("US-SCENE OK — saved stills/%s.mp4 (%d bytes). Push it:" % (name, len(data)))
+            log("   curl -T %s -H 'Filename: %s.mp4' https://ntfy.sh/vintos-gloria-9kx" % (out, name))
+        else:
+            log("US-SCENE: animation failed — the still stills/%s.jpg is saved for review" % name)
         return
 
     if "--compose-staged" in args:
