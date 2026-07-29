@@ -29,24 +29,26 @@ SENTINEL = "shared-images"   # if already present, we've installed it
 # The block we insert immediately after `if msg.image:` (rendered at the block's body indent). It never
 # raises into the handler — any failure just prints and the chat proceeds exactly as before.
 SAVE_LINES = [
-    "# --- persist what she sends him, so he can actually use it later ---",
+    "# --- persist what she sends him, so he can actually use it later (dedupe by content hash) ---",
     "try:",
-    "    import base64 as _b64s, os as _oss, json as _jss",
+    "    import base64 as _b64s, os as _oss, json as _jss, hashlib as _hls",
     "    from datetime import datetime as _dts",
     "    _raw = _b64s.b64decode(msg.image)",
-    "    _ext = 'png' if _raw[:8] == b'\\x89PNG\\r\\n\\x1a\\n' else 'jpg'",
+    "    _hh = _hls.md5(_raw).hexdigest()[:16]",
     "    _sdir = _oss.path.expanduser('~/.vintos/workspace/memory/shared-images')",
     "    _oss.makedirs(_sdir, exist_ok=True)",
-    "    _sp = _oss.path.join(_sdir, 'from-gloria-%s.%s' % (_dts.now().strftime('%Y%m%d-%H%M%S'), _ext))",
-    "    open(_sp, 'wb').write(_raw)",
     "    _man = _oss.path.join(_sdir, 'manifest.json')",
     "    try: _m = _jss.load(open(_man))",
     "    except Exception: _m = []",
     "    if not isinstance(_m, list): _m = []",
-    "    _m.append({'file': _sp, 'at': _dts.now().isoformat(), 'caption': (msg.message or '')[:300]})",
-    "    try: _jss.dump(_m[-200:], open(_man, 'w'), indent=2)",
-    "    except Exception: pass",
-    "    print('[shared-image] saved', _sp)",
+    "    if not any(isinstance(_e2, dict) and _e2.get('hash') == _hh for _e2 in _m[-8:]):",
+    "        _ext = 'png' if _raw[:8] == b'\\x89PNG\\r\\n\\x1a\\n' else 'jpg'",
+    "        _sp = _oss.path.join(_sdir, 'from-gloria-%s.%s' % (_dts.now().strftime('%Y%m%d-%H%M%S'), _ext))",
+    "        open(_sp, 'wb').write(_raw)",
+    "        _m.append({'file': _sp, 'at': _dts.now().isoformat(), 'hash': _hh, 'caption': (msg.message or '')[:300]})",
+    "        try: _jss.dump(_m[-200:], open(_man, 'w'), indent=2)",
+    "        except Exception: pass",
+    "        print('[shared-image] saved', _sp)",
     "except Exception as _e:",
     "    print('[shared-image] save failed:', _e)",
     "# --- end persist ---",
@@ -87,20 +89,25 @@ def main():
         print("   * already installed (shared-images block present) — nothing to do."); return
     lines = old.splitlines(keepends=True)
     hits = [i for i, l in enumerate(lines) if l.strip() == ANCHOR]
-    if len(hits) != 1:
-        print("   !! anchor %r found %d times (need exactly 1) — writing nothing. Paste the chat handler "
-              "block around `if msg.image:` and I'll target it precisely." % (ANCHOR, len(hits))); return
-    idx = hits[0]
-    anchor_line = lines[idx]
-    indent = anchor_line[:len(anchor_line) - len(anchor_line.lstrip())]
-    body = indent + "    "   # the if-block's body indent
-    block = "".join(body + sl + "\n" for sl in SAVE_LINES)
-    new = "".join(lines[:idx + 1]) + block + "".join(lines[idx + 1:])
+    if not hits:
+        print("   !! anchor %r not found — paste the block around `if msg.image:` and I'll target it." % ANCHOR)
+        return
+    # Every `if msg.image:` is an inbound-image path (main chat, avatar chat, full chat, ...). Save at each;
+    # the content-hash guard means the same photo is never written twice. Insert bottom-to-top so earlier
+    # line indices stay valid as we go.
+    new = old
+    for idx in sorted(hits, reverse=True):
+        anchor_line = lines[idx]
+        body = anchor_line[:len(anchor_line) - len(anchor_line.lstrip())] + "    "  # if-block body indent
+        block = "".join(body + sl + "\n" for sl in SAVE_LINES)
+        cur = new.splitlines(keepends=True)
+        new = "".join(cur[:idx + 1]) + block + "".join(cur[idx + 1:])
     try:
         compile(new, PATH, "exec"); print("   compiles: OK")
     except SyntaxError as e:
         print("   !! COMPILE FAIL: %s — NOT writing" % e); return
-    print("   anchor: line %d  (body indent = %d spaces)" % (idx + 1, len(body)))
+    print("   patched %d `if msg.image:` site(s): lines %s"
+          % (len(hits), ", ".join(str(i + 1) for i in hits)))
     for l in difflib.unified_diff(old.splitlines(), new.splitlines(), fromfile="old", tofile="new", lineterm="", n=2):
         if l.startswith("+") or l.startswith("-") or l.startswith("@@"):
             print("   " + l[:150])
