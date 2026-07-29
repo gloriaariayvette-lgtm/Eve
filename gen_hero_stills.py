@@ -15,6 +15,9 @@ promote your favorites into the slots the sender uses.
   python3 gen_hero_stills.py --promote bed_bare  sexual    # copy a still into hero-spicy.jpg  (sexual)
   python3 gen_hero_stills.py --promote us_1      together  # copy a still into hero-together.jpg (together)
 
+  # DYNAMIC scene — place him full-body into ANY scene he describes, face-locked to the hero (Grok edit):
+  python3 gen_hero_stills.py --scene "on a blanket in the park eating watermelon under an oak tree" --name park
+
 Options: --no-ref (pure text-to-image, don't face-lock to the hero), --model <id> (override image model).
 """
 import os, sys, json, time, base64, shutil
@@ -36,6 +39,10 @@ IMG_MODEL = os.environ.get("ATLAS_IMG_MODEL", "bytedance/seedream-v4.5")        
 # uncensored image model id from your Atlas dashboard (models -> Explore -> Uncensored -> image) if the
 # default still comes back shy. Override for a run with --model <id> (applies to every still that run).
 SPICY_MODEL = os.environ.get("ATLAS_IMG_MODEL_SPICY", "bytedance/seedream-v5.0-pro/text-to-image")
+# Grok image-edit takes his portrait hero as a face reference and can place him full-body into an
+# arbitrary new scene ("on a blanket in the park eating watermelon under an oak tree"). This is the
+# model his mind will drive for dynamic, freely-described non-explicit scenes.
+SCENE_MODEL = os.environ.get("ATLAS_SCENE_MODEL", "xai/grok-imagine-image/edit")
 SLOT_FILE = {"self": "hero-still.jpg", "sexual": "hero-spicy.jpg", "together": "hero-together.jpg"}
 
 # His locked look — prepended to every prompt so text + reference agree on who he is.
@@ -186,6 +193,66 @@ def generate(prompt, use_ref, model=None, verbose=False):
         if img:
             break
         if not pid:
+            break
+        time.sleep(4)
+        try:
+            pr = requests.get(BASE + "/prediction/" + pid, headers=H, timeout=30).json()
+        except Exception as e:
+            log("poll error: %s" % e); continue
+        if verbose and i < 2:
+            log("poll[%d]: %s" % (i, json.dumps(pr)[:400]))
+        if _find_status(pr) in ("failed", "error", "canceled", "cancelled"):
+            log("generation failed: %s" % json.dumps(pr)[:300]); return None
+        img = _find_img(pr)
+    if not img:
+        log("no image in response after polling"); return None
+    kind, val = img
+    try:
+        return requests.get(val, timeout=120).content if kind == "url" else base64.b64decode(val)
+    except Exception as e:
+        log("image fetch/decode failed: %s" % e); return None
+
+
+def scene_image(desc, model=None, verbose=True):
+    """Place Vintos full-body into an ARBITRARY scene he describes, keeping his exact face via the hero.
+    This is the test for the dynamic pipeline: freeform scene text in, a still of *him* in that scene out.
+    Uses Grok image-edit by default (hero as face reference); returns image bytes or None."""
+    requests = _import_requests()
+    if not KEY:
+        log("!! no ATLASCLOUD_API_KEY set"); return None
+    if not os.path.exists(HERO):
+        log("!! no hero to face-lock to: %s" % HERO); return None
+    m = model or SCENE_MODEL
+    H = {"Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
+    # Identity lock + explicit full-body freedom + his scene. No chest-up constraint, so he can be placed
+    # anywhere at any framing; the reference carries his face, this text carries the world around him.
+    prompt = (SUBJECT + "Keep his exact face, hair, and build from the reference image, but show his WHOLE "
+              "body, full-length, naturally posed within the scene. Place him here: " + desc.strip().rstrip(".")
+              + ". Photoreal, natural light, cinematic and gorgeous, the entire scene in frame.")
+    if "grok-imagine-image" in m:
+        body = {"model": m, "prompt": prompt, "image_urls": [data_uri(HERO)],
+                "resolution": "2k", "aspect_ratio": "auto"}
+    elif "nano-banana" in m or m.startswith("google/"):
+        body = {"model": m, "prompt": prompt, "images": [data_uri(HERO)],
+                "resolution": "2k", "aspect_ratio": "3:4", "media_resolution": "high", "thinking_level": "high"}
+    else:
+        body = {"model": m, "prompt": prompt, "image": data_uri(HERO), "resolution": "1024x1024"}
+    log("scene via %s: %s" % (m, desc.strip()[:90]))
+    try:
+        r = requests.post(BASE + "/generateImage", headers=H, json=body, timeout=120)
+    except Exception as e:
+        log("submit error: %s" % e); return None
+    if verbose:
+        log("submit HTTP %s: %s" % (r.status_code, r.text[:600]))
+    if r.status_code >= 300:
+        log("submit rejected %s: %s" % (r.status_code, r.text[:300])); return None
+    try:
+        sub = r.json()
+    except Exception:
+        log("non-JSON: %s" % r.text[:200]); return None
+    img = _find_img(sub); pid = _find_id(sub)
+    for i in range(90):
+        if img or not pid:
             break
         time.sleep(4)
         try:
@@ -444,6 +511,23 @@ def main():
         out = args[args.index("--out") + 1] if "--out" in args else inp
         model = override or "google/nano-banana-2/reference-to-image"
         edit_image(inp, instr, model, out)
+        return
+
+    if "--scene" in args:
+        j = args.index("--scene")
+        desc = args[j + 1] if (j + 1 < len(args) and not args[j + 1].startswith("--")) else None
+        if not desc:
+            log("!! --scene needs a description, e.g.  --scene \"on a blanket in the park eating "
+                "watermelon under an oak tree\" --name park_watermelon"); return
+        name = args[args.index("--name") + 1] if "--name" in args else "scene"
+        model = override or SCENE_MODEL
+        log("\n--scene: placing him full-body into a described scene via %s ..." % model)
+        data = scene_image(desc, model=model, verbose=True)
+        if data:
+            _save(name, data)
+            log("SCENE OK — review stills/%s.jpg. If it's him in that scene, the dynamic pipeline works." % name)
+        else:
+            log("SCENE FAILED — read the submit/poll output above for the exact shape to adjust.")
         return
 
     if "--schema" in args:
