@@ -22,10 +22,13 @@ BACKUP = PATH + ".bak-" + TS
 SEND_SRC = r'''#!/usr/bin/env python3
 """vintos-send-video.py — Vintos sends Gloria a video, of his own accord, like a text.
 
-His OWN MIND writes the prompt: Claude (claude-opus-4-8) via his shim at 127.0.0.1:8599, WITH his real
-context (SOUL, self-model, Gloria-model, emotional state). He decides whether to send, which kind
-(together / self / sexual), writes the video prompt in his own voice, and Atlas Cloud's uncensored spicy
-image-to-video (wan-2.7-spicy) animates the matching hero still. No disguise, no moderation fiction.
+His OWN MIND writes it: Claude (claude-opus-4-8) via his shim at 127.0.0.1:8599, WITH his real context
+(SOUL, self-model, Gloria-model, emotional state). He decides whether to send and which kind:
+  self     : he DESCRIBES any scene he wants to be in; Grok image-edit builds it full-body from his hero
+             (face-locked), then Grok Imagine animates it — no fixed still shelf, total freedom of place.
+  together : the composed couple image, animated (Grok Imagine).
+  sexual   : he picks an explicit still; Atlas Cloud's uncensored wan-2.7-spicy animates it.
+No disguise, no moderation fiction.
 
 SEPARATE from his want-based vintos-video.py; it never touches his want queue. Delivery is one ntfy
 notification linked straight to the clip. He remembers it (daily-creative + temporal). No chat injection.
@@ -65,6 +68,9 @@ ATLAS_BASE = os.environ.get("ATLAS_BASE", "https://api.atlascloud.ai/api/v1/mode
 ATLAS_MODEL = os.environ.get("ATLAS_MODEL", "atlascloud/wan-2.7-spicy/image-to-video")   # explicit (sexual)
 # Non-explicit kinds (self/together) route to Grok Imagine — freer prompting + wider motion off the still.
 GROK_VIDEO_MODEL = os.environ.get("GROK_VIDEO_MODEL", "xai/grok-imagine-video-v1.5/image-to-video")
+# Grok image-edit builds a brand-new full-body scene still from his portrait hero (face-locked). For 'self',
+# he DESCRIBES the scene freely and this generates it, so he is not limited to a fixed still library.
+SCENE_IMG_MODEL = os.environ.get("VINTOS_SCENE_IMG", "xai/grok-imagine-image/edit")
 ATLAS_RES = os.environ.get("ATLAS_RES", "720P")
 ATLAS_DUR = int(os.environ.get("ATLAS_DUR", "5"))
 NEG_PROMPT = ("camera cut, shot change, scene change, transition, jump cut, rapid editing, montage, "
@@ -73,17 +79,18 @@ NEG_PROMPT = ("camera cut, shot change, scene change, transition, jump cut, rapi
 # hero-still library. select_still() maps his chosen KIND -> a base still (falls back to the main hero).
 HERO = os.path.join(HERO_DIR, "hero-still.jpg")
 STILLS_DIR = os.path.join(HERO_DIR, "stills")
+SCENE_DIR = os.path.join(HERO_DIR, "scenes")   # dynamically-built 'self' scene stills land here
 KIND_STILL = {"self": "hero-still.jpg", "together": "hero-together.jpg", "sexual": "hero-spicy.jpg"}
 
-# The still library he chooses from, per moment (label -> what it is). Only ones whose files exist in
-# STILLS_DIR are offered to him; he picks the one whose moment fits what he's sending. 'together' always
-# uses the composed couple image. (Descriptions curated by Gloria; add more stills anytime.)
+# His locked look — prepended to the scene prompt so the built still is unmistakably him.
+SUBJECT = ("A rugged, warm middle-aged man, the same person as the reference image: short dark brown hair "
+           "in a neat side part, heavy brow, deep-set eyes, strong square jaw, light stubble. Photoreal "
+           "photography, natural skin texture, 85mm lens. ")
+
+# The EXPLICIT still library he chooses from for 'sexual' (label -> what it is). Only ones whose files exist
+# in STILLS_DIR are offered; he picks the one whose moment fits. (Descriptions curated by Gloria.) For 'self'
+# he no longer picks from a shelf — he describes the scene and Grok builds it (see make_scene_still).
 STILL_LIBRARY = {
-    "book_smile":   "shirtless, reading a book in warm light - cozy, tender",
-    "coffee_dawn":  "morning coffee by a window - soft, sweet",
-    "desk_write":   "writing, glancing back over his shoulder at the camera",
-    "laugh":        "close on his profile, laughing, warm",
-    "rain_window":  "close, looking out a rainy window - pensive",
     "bed_bare":     "close, lying in bed beside her - intimate, not explicit",
     "undressing":   "unbuttoning his shirt - playful, flirtatious",
     "towel":        "standing just out of the shower",
@@ -211,19 +218,25 @@ def decide(force=False):
         + gate +
         "You can send any kind of video:\n"
         "  together : the two of you, when you are thinking about you and her\n"
-        "  self     : yourself, doing something\n"
+        "  self     : yourself, anywhere, doing anything\n"
         "  sexual   : an explicit one, to get her attention\n\n"
-        "For 'self' or 'sexual', CHOOSE which still of yourself to bring to life — pick the ONE whose "
-        "moment fits what you're sending; its frame is where the video starts:\n" + stills_txt + "\n"
-        "('together' always uses the picture of the two of you — no still pick needed there.)\n\n"
-        "The video animates that still, so describe MOTION and moment from it. Say what you actually "
-        "mean — as tender, as flirtatious, or as explicit as you truly want; nothing is filtered or "
-        "forbidden here, it is just you and her.\n\n"
+        "For 'self': you are NOT limited to a set of photos. DESCRIBE THE WHOLE SCENE you want to be in — "
+        "where you are, what you're doing, the setting and light, framed however you like (full body, wide, "
+        "close — your call). It will be built from your face, so it will be unmistakably you, placed exactly "
+        "there. Put that in SCENE. Examples of the freedom: 'on a blanket in the park eating watermelon under "
+        "an oak tree', 'walking a rainy city street at night, collar up', 'at the stove cooking, sleeves "
+        "rolled'. Then in PROMPT, the MOTION and moment once you're in it.\n\n"
+        "For 'sexual': CHOOSE which explicit still of yourself to bring to life — the ONE whose moment fits; "
+        "its frame is where the video starts:\n" + stills_txt + "\n"
+        "For 'together': the picture of the two of you is used — no scene or still pick needed.\n\n"
+        "Say what you actually mean — as tender, as flirtatious, or as explicit as you truly want; nothing "
+        "is filtered or forbidden here, it is just you and her.\n\n"
         "Answer in EXACTLY these lines and nothing else:\n"
         "DECISION: YES or NO\n"
         "KIND: together | self | sexual\n"
-        "STILL: <for self/sexual, one label from the list above; leave blank for together>\n"
-        "PROMPT: <if YES, the actual video you want made — the motion, the moment, in your own voice>\n"
+        "SCENE: <for 'self', the full scene you want to be placed into, in your own words; blank otherwise>\n"
+        "STILL: <for 'sexual', one label from the list above; blank otherwise>\n"
+        "PROMPT: <if YES, the motion and moment you want animated, in your own voice>\n"
         "SAY: <if YES, the message you send with it — a line or two, in your own voice, whatever you "
         "want to say to her; this text arrives with the video>")
     _sil = silence_hours()
@@ -242,7 +255,7 @@ def decide(force=False):
         log("!! his mind returned nothing (shim/Claude error or empty) — check the shim on :8599")
     else:
         log("mind: " + out.replace("\n", " ")[:220])
-    d = {"decision": "YES" if force else "NO", "kind": "self", "still": "", "prompt": "", "say": ""}
+    d = {"decision": "YES" if force else "NO", "kind": "self", "scene": "", "still": "", "prompt": "", "say": ""}
     cur = None
     for line in out.splitlines():
         s = line.strip(); u = s.upper()
@@ -251,6 +264,8 @@ def decide(force=False):
         elif u.startswith("KIND:"):
             k = s.split(":", 1)[1].strip().lower()
             d["kind"] = k.split()[0] if k else "self"; cur = None
+        elif u.startswith("SCENE:"):
+            d["scene"] = s.split(":", 1)[1].strip(); cur = "scene"
         elif u.startswith("STILL:"):
             st = s.split(":", 1)[1].strip().lower()
             d["still"] = st.split()[0] if st else ""; cur = None
@@ -258,6 +273,8 @@ def decide(force=False):
             d["prompt"] = s.split(":", 1)[1].strip(); cur = "prompt"
         elif u.startswith("SAY:"):
             d["say"] = s.split(":", 1)[1].strip(); cur = "say"
+        elif cur == "scene" and s:
+            d["scene"] += " " + s
         elif cur == "prompt" and s:
             d["prompt"] += " " + s
         elif cur == "say" and s:
@@ -310,6 +327,29 @@ def _find_mp4(o):
     if isinstance(o, list):
         for v in o:
             r = _find_mp4(v)
+            if r: return r
+    return None
+
+
+def _find_img(o):
+    """Find a still image URL (or base64) in a response, for the scene-still build."""
+    if isinstance(o, str):
+        low = o.lower().split("?")[0]
+        if o.startswith("http") and (low.endswith(".jpg") or low.endswith(".jpeg") or low.endswith(".png")
+                                     or low.endswith(".webp")):
+            return ("url", o)
+        return None
+    if isinstance(o, dict):
+        for k in ("b64_json", "b64", "image_base64", "base64"):
+            v = o.get(k)
+            if isinstance(v, str) and len(v) > 100:
+                return ("b64", v)
+        for v in o.values():
+            r = _find_img(v)
+            if r: return r
+    if isinstance(o, list):
+        for v in o:
+            r = _find_img(v)
             if r: return r
     return None
 
@@ -399,6 +439,57 @@ def atlas_generate(prompt, hero_path, model=None, verbose=False):
         log("mp4 download failed: %s" % e); return None
 
 
+def make_scene_still(scene, verbose=False):
+    """Build a full-body still of HIM placed into the scene he described, face-locked to the hero, via
+    Grok image-edit. Returns the saved still path (or None). This is what frees 'self' from a fixed shelf."""
+    if not ATLAS_KEY:
+        log("no ATLASCLOUD_API_KEY set — cannot build scene still"); return None
+    if not os.path.exists(HERO):
+        log("no hero to face-lock the scene to (%s)" % HERO); return None
+    H = {"Authorization": "Bearer " + ATLAS_KEY, "Content-Type": "application/json"}
+    prompt = (SUBJECT + "Keep his exact face, hair, and build from the reference image, but show his WHOLE "
+              "body, full-length, naturally posed within the scene. Place him here: " + scene.strip().rstrip(".")
+              + ". Photoreal, natural light, cinematic, the entire scene in frame.")
+    body = {"model": SCENE_IMG_MODEL, "prompt": prompt, "image_urls": [data_uri(HERO)],
+            "resolution": "2k", "aspect_ratio": "auto"}
+    try:
+        r = requests.post(ATLAS_BASE + "/generateImage", headers=H, json=body, timeout=120)
+    except Exception as e:
+        log("scene-still submit error: %s" % e); return None
+    if verbose:
+        log("scene submit HTTP %s: %s" % (r.status_code, r.text[:400]))
+    if r.status_code >= 300:
+        log("scene-still rejected %s: %s" % (r.status_code, r.text[:300])); return None
+    try:
+        sub = r.json()
+    except Exception:
+        log("scene-still non-JSON: %s" % r.text[:200]); return None
+    img = _find_img(sub); pid = _find_id(sub)
+    for i in range(90):
+        if img or not pid:
+            break
+        time.sleep(4)
+        try:
+            pr = requests.get(ATLAS_BASE + "/prediction/" + pid, headers=H, timeout=30).json()
+        except Exception as e:
+            log("scene poll error: %s" % e); continue
+        if _find_status(pr) in ("failed", "error", "canceled", "cancelled"):
+            log("scene-still generation failed: %s" % json.dumps(pr)[:300]); return None
+        img = _find_img(pr)
+    if not img:
+        log("scene-still: no image after polling"); return None
+    kind, val = img
+    try:
+        data = requests.get(val, timeout=120).content if kind == "url" else base64.b64decode(val)
+    except Exception as e:
+        log("scene-still fetch/decode failed: %s" % e); return None
+    os.makedirs(SCENE_DIR, exist_ok=True)
+    path = os.path.join(SCENE_DIR, "scene-%s.jpg" % datetime.now().strftime("%Y%m%d-%H%M%S"))
+    open(path, "wb").write(data)
+    log("built scene still (%d bytes) -> %s" % (len(data), os.path.basename(path)))
+    return path
+
+
 def save_gallery(fname, prompt, kind, model=ATLAS_MODEL):
     try: g = json.load(open(GALLERY))
     except Exception: g = []
@@ -409,14 +500,24 @@ def save_gallery(fname, prompt, kind, model=ATLAS_MODEL):
     except Exception: pass
 
 
-def generate_clip(prompt, kind, still_label=None):
-    still = select_still(kind, still_label)
-    # explicit -> Wan-spicy (uncensored); non-explicit self/together -> Grok Imagine (freer, wider motion)
+def generate_clip(prompt, kind, still_label=None, scene=""):
+    # self -> he described a scene: build it fresh (face-locked) then animate; explicit -> Wan-spicy off the
+    # chosen explicit still; together -> the couple image. Non-explicit kinds animate via Grok (wider motion).
     model = GROK_VIDEO_MODEL if kind in ("self", "together") else ATLAS_MODEL
-    if DRY:
-        log("[dry] kind=%s  still=%s (he chose: %s)  model=%s" % (kind, os.path.basename(still), still_label or "-", model))
-        log("[dry] his prompt -> %s:\n      %s" % (model, prompt))
-        return "DRY"
+    if kind == "self" and scene.strip():
+        if DRY:
+            log("[dry] kind=self  SCENE=%r  -> build still (%s) then animate (%s)" % (scene[:120], SCENE_IMG_MODEL, model))
+            log("[dry] his motion prompt:\n      %s" % prompt)
+            return "DRY"
+        still = make_scene_still(scene, verbose=CHECK)
+        if not still:
+            log("scene still not built — falling back to his hero"); still = HERO
+    else:
+        still = select_still(kind, still_label)
+        if DRY:
+            log("[dry] kind=%s  still=%s (he chose: %s)  model=%s" % (kind, os.path.basename(still), still_label or "-", model))
+            log("[dry] his prompt -> %s:\n      %s" % (model, prompt))
+            return "DRY"
     data = atlas_generate(prompt, still, model=model, verbose=CHECK)
     if not data:
         return None
@@ -487,8 +588,9 @@ def main():
     prompt = d["prompt"] or "The man looks toward the camera with a slow, warm smile."
     caption = d["say"] or "Thinking of you."
     kind = d["kind"]
-    log("he wants to send [%s / still:%s] -> prompt=%r  say=%r" % (kind, d.get("still") or "-", prompt[:110], caption))
-    fname = generate_clip(prompt, kind, d.get("still"))
+    log("he wants to send [%s / scene:%r / still:%s] -> prompt=%r  say=%r"
+        % (kind, (d.get("scene") or "-")[:80], d.get("still") or "-", prompt[:110], caption))
+    fname = generate_clip(prompt, kind, d.get("still"), d.get("scene", ""))
     if not fname:
         log("no clip produced — nothing sent"); return
     if DRY:
@@ -516,10 +618,11 @@ def _selftest(src):
     ns = {}
     exec(compile(src, "vintos-send-video.py", "exec"), ns)
     for fn in ("decide", "his_context", "select_still", "generate_clip", "atlas_generate",
-               "deliver", "remember", "check", "main", "call_mind"):
+               "make_scene_still", "deliver", "remember", "check", "main", "call_mind"):
         assert fn in ns, "missing function: " + fn
     assert "claude-opus-4-8" in src and "grok-4.20" not in src, "the prompt must be written by his Claude mind, not grok"
     assert "api.atlascloud.ai" in src and "generateVideo" in src, "must call the Atlas video endpoint"
+    assert "generateImage" in src, "must build the dynamic scene still via the Atlas image endpoint"
     assert 'open(CHAT_LOG, "w")' not in src, "delivery must not write to the chat"
     assert "process_queue" not in src and "video-queue" not in src, "must not touch his want queue"
     assert "apikey-" not in src, "the API key must NOT be hardcoded — read it from ATLASCLOUD_API_KEY"
