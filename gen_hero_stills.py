@@ -27,6 +27,9 @@ HERO = os.path.join(HERO_DIR, "hero-still.jpg")
 MANIFEST = os.path.join(STILL_DIR, "manifest.json")
 
 KEY = os.environ.get("ATLASCLOUD_API_KEY", "")
+if not KEY:  # works in any shell / cron — same key file the sender uses
+    try: KEY = open(os.path.expanduser("~/.vintos/atlas-key")).read().strip()
+    except Exception: KEY = ""
 BASE = os.environ.get("ATLAS_BASE", "https://api.atlascloud.ai/api/v1/model")
 IMG_MODEL = os.environ.get("ATLAS_IMG_MODEL", "bytedance/seedream-v4.5")          # cozy/self: keeps face, fine SFW
 # Uncensored image model for the spicy + zoomed sets. ByteDance Seedream tames nudity; set this to an
