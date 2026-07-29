@@ -62,7 +62,9 @@ if not ATLAS_KEY:  # so cron works without an exported env var — drop the key 
     try: ATLAS_KEY = open(os.path.expanduser("~/.vintos/atlas-key")).read().strip()
     except Exception: ATLAS_KEY = ""
 ATLAS_BASE = os.environ.get("ATLAS_BASE", "https://api.atlascloud.ai/api/v1/model")
-ATLAS_MODEL = os.environ.get("ATLAS_MODEL", "atlascloud/wan-2.7-spicy/image-to-video")
+ATLAS_MODEL = os.environ.get("ATLAS_MODEL", "atlascloud/wan-2.7-spicy/image-to-video")   # explicit (sexual)
+# Non-explicit kinds (self/together) route to Grok Imagine — freer prompting + wider motion off the still.
+GROK_VIDEO_MODEL = os.environ.get("GROK_VIDEO_MODEL", "xai/grok-imagine-video-v1.5/image-to-video")
 ATLAS_RES = os.environ.get("ATLAS_RES", "720P")
 ATLAS_DUR = int(os.environ.get("ATLAS_DUR", "5"))
 NEG_PROMPT = ("camera cut, shot change, scene change, transition, jump cut, rapid editing, montage, "
@@ -343,15 +345,22 @@ def _find_status(o):
     return None
 
 
-def atlas_generate(prompt, hero_path, verbose=False):
-    """Submit image-to-video to Atlas, poll, return mp4 bytes (or None). His prompt goes in verbatim."""
+def atlas_generate(prompt, hero_path, model=None, verbose=False):
+    """Submit image-to-video to Atlas, poll, return mp4 bytes (or None). His prompt goes in verbatim.
+    Wan-spicy and Grok-Imagine take different request bodies; we build the right one per model."""
+    model = model or ATLAS_MODEL
     if not ATLAS_KEY:
         log("no ATLASCLOUD_API_KEY set — export it on the box"); return None
     if not os.path.exists(hero_path):
         log("hero still missing (%s) — upload it first via /video-hero" % hero_path); return None
     H = {"Authorization": "Bearer " + ATLAS_KEY, "Content-Type": "application/json"}
-    body = {"model": ATLAS_MODEL, "image": data_uri(hero_path), "prompt": prompt,
-            "negative_prompt": NEG_PROMPT, "resolution": ATLAS_RES, "duration": ATLAS_DUR, "seed": -1}
+    if "grok" in model:
+        # Grok Imagine: image_url (not image), lowercase 720p, no negative_prompt/seed; aspect matches the still.
+        body = {"model": model, "prompt": prompt, "image_url": data_uri(hero_path),
+                "duration": ATLAS_DUR, "resolution": ATLAS_RES.lower()}
+    else:
+        body = {"model": model, "image": data_uri(hero_path), "prompt": prompt,
+                "negative_prompt": NEG_PROMPT, "resolution": ATLAS_RES, "duration": ATLAS_DUR, "seed": -1}
     try:
         r = requests.post(ATLAS_BASE + "/generateVideo", headers=H, json=body, timeout=120)
     except Exception as e:
@@ -390,28 +399,31 @@ def atlas_generate(prompt, hero_path, verbose=False):
         log("mp4 download failed: %s" % e); return None
 
 
-def save_gallery(fname, prompt, kind):
+def save_gallery(fname, prompt, kind, model=ATLAS_MODEL):
     try: g = json.load(open(GALLERY))
     except Exception: g = []
     g.append({"file": fname, "prompt": prompt[:400], "kind": kind, "source": "self-initiated",
-              "backend": "atlas-wan-spicy", "timestamp": datetime.now().isoformat()})
+              "backend": ("grok-imagine" if "grok" in model else "atlas-wan-spicy"),
+              "model": model, "timestamp": datetime.now().isoformat()})
     try: json.dump(g, open(GALLERY, "w"), indent=2)
     except Exception: pass
 
 
 def generate_clip(prompt, kind, still_label=None):
     still = select_still(kind, still_label)
+    # explicit -> Wan-spicy (uncensored); non-explicit self/together -> Grok Imagine (freer, wider motion)
+    model = GROK_VIDEO_MODEL if kind in ("self", "together") else ATLAS_MODEL
     if DRY:
-        log("[dry] kind=%s  still=%s (he chose: %s)" % (kind, os.path.basename(still), still_label or "-"))
-        log("[dry] his prompt -> Atlas %s:\n      %s" % (ATLAS_MODEL, prompt))
+        log("[dry] kind=%s  still=%s (he chose: %s)  model=%s" % (kind, os.path.basename(still), still_label or "-", model))
+        log("[dry] his prompt -> %s:\n      %s" % (model, prompt))
         return "DRY"
-    data = atlas_generate(prompt, still, verbose=CHECK)
+    data = atlas_generate(prompt, still, model=model, verbose=CHECK)
     if not data:
         return None
     os.makedirs(VID_DIR, exist_ok=True)
     fname = "video-%s.mp4" % datetime.now().strftime("%Y%m%d-%H%M%S")
     open(os.path.join(VID_DIR, fname), "wb").write(data)
-    save_gallery(fname, prompt, kind)
+    save_gallery(fname, prompt, kind, model)
     return fname
 
 

@@ -155,9 +155,16 @@ def generate(prompt, use_ref, model=None, verbose=False):
     if not KEY:
         log("!! no ATLASCLOUD_API_KEY set"); return None
     H = {"Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
-    body = {"model": model or IMG_MODEL, "prompt": SUBJECT + prompt, "resolution": "1024x1024"}
-    if use_ref and os.path.exists(HERO):
-        body["image"] = data_uri(HERO)   # face reference (Seedream edit/reference); harmless if ignored
+    m = model or IMG_MODEL
+    if "grok-imagine-image" in m:
+        # Grok image edit: image_urls (array), resolution 1k/2k, aspect auto.
+        body = {"model": m, "prompt": SUBJECT + prompt, "resolution": "1k", "aspect_ratio": "auto"}
+        if use_ref and os.path.exists(HERO):
+            body["image_urls"] = [data_uri(HERO)]
+    else:
+        body = {"model": m, "prompt": SUBJECT + prompt, "resolution": "1024x1024"}
+        if use_ref and os.path.exists(HERO):
+            body["image"] = data_uri(HERO)   # face reference (Seedream edit/reference); harmless if ignored
     try:
         r = requests.post(BASE + "/generateImage", headers=H, json=body, timeout=120)
     except Exception as e:
