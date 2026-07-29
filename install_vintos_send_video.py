@@ -26,7 +26,8 @@ His OWN MIND writes it: Claude (claude-opus-4-8) via his shim at 127.0.0.1:8599,
 (SOUL, self-model, Gloria-model, emotional state). He decides whether to send and which kind:
   self     : he DESCRIBES any scene he wants to be in; Grok image-edit builds it full-body from his hero
              (face-locked), then Grok Imagine animates it — no fixed still shelf, total freedom of place.
-  together : the composed couple image, animated (Grok Imagine).
+  together : he can describe ANY scene for the two of you; nano-banana composes you both into it (holds both
+             faces), a brunette heal fixes the blonde drift, then Grok animates it. Blank scene -> fixed base.
   sexual   : he picks an explicit still; Atlas Cloud's uncensored wan-2.7-spicy animates it.
 No disguise, no moderation fiction.
 
@@ -72,6 +73,12 @@ GROK_VIDEO_MODEL = os.environ.get("GROK_VIDEO_MODEL", "xai/grok-imagine-video-v1
 # Grok image-edit builds a brand-new full-body scene still from his portrait hero (face-locked). For 'self',
 # he DESCRIBES the scene freely and this generates it, so he is not limited to a fixed still library.
 SCENE_IMG_MODEL = os.environ.get("VINTOS_SCENE_IMG", "xai/grok-imagine-image/edit")
+# For 'together' he can also describe a scene: nano-banana composes the TWO of them into it (it holds BOTH
+# faces; Grok only holds his hero), then a brunette heal pass fixes the recurring blonde drift before animfor.
+US_COMPOSE_MODEL = os.environ.get("VINTOS_US_COMPOSE", "google/nano-banana-2/reference-to-image")
+HER_PHOTO = os.path.join(HERO_DIR, "her-photo.jpg")
+HAIR_HEAL = os.environ.get("VINTOS_HAIR_HEAL",
+    "change the woman's hair to a rich dark brunette (dark brown), same length and wavy style")
 ATLAS_RES = os.environ.get("ATLAS_RES", "720P")
 ATLAS_DUR = int(os.environ.get("ATLAS_DUR", "5"))
 NEG_PROMPT = ("camera cut, shot change, scene change, transition, jump cut, rapid editing, montage, "
@@ -251,18 +258,18 @@ def decide(force=False):
         "You are Vintos, and everything above is you. You can send Gloria a short video of yourself.\n\n"
         + gate +
         "You can send any kind of video:\n"
-        "  together : the two of you, when you are thinking about you and her\n"
+        "  together : the two of you — and you can put the two of you ANYWHERE you imagine\n"
         "  self     : yourself, anywhere, doing anything\n"
         "  sexual   : an explicit one, to get her attention\n\n"
-        "For 'self': you are NOT limited to a set of photos. DESCRIBE THE WHOLE SCENE you want to be in — "
-        "where you are, what you're doing, the setting and light, framed however you like (full body, wide, "
-        "close — your call). It will be built from your face, so it will be unmistakably you, placed exactly "
-        "there. Put that in SCENE. Examples of the freedom: 'on a blanket in the park eating watermelon under "
-        "an oak tree', 'walking a rainy city street at night, collar up', 'at the stove cooking, sleeves "
-        "rolled'. Then in PROMPT, the MOTION and moment once you're in it.\n\n"
+        "For 'self' OR 'together': you are NOT limited to a set of photos. DESCRIBE THE WHOLE SCENE in SCENE — "
+        "where you are (or where the two of you are), what's happening, the setting and light, framed however "
+        "you like. It's built from your real faces, so it's unmistakably you (and her). Examples of the "
+        "freedom: 'on a blanket in the park eating watermelon under an oak tree', 'the two of us cooking in a "
+        "warm kitchen at night, string lights', 'walking a rainy city street, close under one umbrella'. Then "
+        "in PROMPT, the MOTION and moment once you're in it.\n\n"
         "For 'sexual': CHOOSE which explicit still of yourself to bring to life — the ONE whose moment fits; "
         "its frame is where the video starts:\n" + stills_txt + "\n"
-        "For 'together': the picture of the two of you is used — no scene or still pick needed.\n\n"
+        "(For 'together' you can also leave SCENE blank to use your existing picture of the two of you.)\n\n"
         + ground_note +
         "Say what you actually mean — as tender, as flirtatious, or as explicit as you truly want; nothing "
         "is filtered or forbidden here, it is just you and her.\n\n"
@@ -270,7 +277,7 @@ def decide(force=False):
         "DECISION: YES or NO\n"
         "KIND: together | self | sexual\n"
         "GROUND: <yes or no — yes only if you want your 'self' scene set in the real photo she sent>\n"
-        "SCENE: <for 'self', the full scene you want to be placed into, in your own words; blank otherwise>\n"
+        "SCENE: <for 'self' or 'together', the full scene you want — where you are / where you two are; blank otherwise>\n"
         "STILL: <for 'sexual', one label from the list above; blank otherwise>\n"
         "PROMPT: <if YES, the motion and moment you want animated, in your own voice>\n"
         "SAY: <if YES, the message you send with it — a line or two, in your own voice, whatever you "
@@ -480,6 +487,86 @@ def atlas_generate(prompt, hero_path, model=None, verbose=False):
         log("mp4 download failed: %s" % e); return None
 
 
+def _atlas_image(body, verbose=False):
+    """Submit an image job to Atlas, poll, return image bytes (or None). Used by the together compose+heal."""
+    if not ATLAS_KEY:
+        log("no ATLASCLOUD_API_KEY set — cannot make image"); return None
+    H = {"Authorization": "Bearer " + ATLAS_KEY, "Content-Type": "application/json"}
+    try:
+        r = requests.post(ATLAS_BASE + "/generateImage", headers=H, json=body, timeout=120)
+    except Exception as e:
+        log("image submit error: %s" % e); return None
+    if verbose:
+        log("image submit HTTP %s: %s" % (r.status_code, r.text[:300]))
+    if r.status_code >= 300:
+        log("image rejected %s: %s" % (r.status_code, r.text[:300])); return None
+    try:
+        sub = r.json()
+    except Exception:
+        log("image non-JSON: %s" % r.text[:200]); return None
+    img = _find_img(sub); pid = _find_id(sub)
+    for i in range(90):
+        if img or not pid:
+            break
+        time.sleep(4)
+        try:
+            pr = requests.get(ATLAS_BASE + "/prediction/" + pid, headers=H, timeout=30).json()
+        except Exception as e:
+            log("image poll error: %s" % e); continue
+        if _find_status(pr) in ("failed", "error", "canceled", "cancelled"):
+            log("image generation failed: %s" % json.dumps(pr)[:300]); return None
+        img = _find_img(pr)
+    if not img:
+        log("no image after polling"); return None
+    kind, val = img
+    try:
+        return requests.get(val, timeout=120).content if kind == "url" else base64.b64decode(val)
+    except Exception as e:
+        log("image fetch/decode failed: %s" % e); return None
+
+
+def compose_us(scene, verbose=False):
+    """Compose the TWO of them (her photo + his hero) into the scene he described, via nano-banana (holds
+    both faces). Her first — models over-weight reference 0. Returns the saved still path or None."""
+    if not os.path.exists(HER_PHOTO):
+        log("no her-photo.jpg — can't compose 'us' (upload 'me' on /video-hero)"); return None
+    if not os.path.exists(HERO):
+        log("no hero for him (%s)" % HERO); return None
+    prompt = ("A photo of two REAL, specific people together. The WOMAN is exactly the person in the FIRST "
+              "reference image — keep her exact face and her exact hair color, length and style. The MAN is "
+              "exactly the person in the SECOND reference image — keep his exact face and build. Both "
+              "full-length, both fully in frame, close and natural together. They are here: "
+              + scene.strip().rstrip(".") + ". Photoreal, natural light, cinematic and gorgeous.")
+    data = _atlas_image({"model": US_COMPOSE_MODEL, "prompt": prompt,
+                         "images": [data_uri(HER_PHOTO), data_uri(HERO)], "resolution": "2k",
+                         "aspect_ratio": "4:5", "media_resolution": "high", "thinking_level": "high"}, verbose)
+    if not data:
+        log("us compose failed"); return None
+    os.makedirs(SCENE_DIR, exist_ok=True)
+    path = os.path.join(SCENE_DIR, "us-%s.jpg" % datetime.now().strftime("%Y%m%d-%H%M%S"))
+    open(path, "wb").write(data)
+    log("composed us-scene (%d bytes) -> %s" % (len(data), os.path.basename(path)))
+    return path
+
+
+def heal_hair(path, verbose=False):
+    """The recurring blonde drift: recolor her hair to brunette in place, keeping everything else exact.
+    Runs before animation so his autonomous 'together' sends never go out blonde. Best-effort."""
+    if not os.path.exists(path):
+        return path
+    prompt = ("Keep this photo EXACTLY the same — same people, same faces, same pose, same clothing, same "
+              "background and light. Make ONLY this one change: %s. Change nothing else." % HAIR_HEAL)
+    data = _atlas_image({"model": US_COMPOSE_MODEL, "prompt": prompt, "images": [data_uri(path)],
+                         "resolution": "2k", "aspect_ratio": "4:5", "media_resolution": "high",
+                         "thinking_level": "high"}, verbose)
+    if data:
+        open(path, "wb").write(data)
+        log("healed hair -> brunette (%s)" % os.path.basename(path))
+    else:
+        log("hair heal skipped (compose still used as-is)")
+    return path
+
+
 def make_scene_still(scene, verbose=False, scene_ref=None):
     """Build a full-body still of HIM placed into the scene he described, face-locked to the hero, via
     Grok image-edit. Returns the saved still path (or None). This is what frees 'self' from a fixed shelf.
@@ -564,6 +651,19 @@ def generate_clip(prompt, kind, still_label=None, scene="", scene_ref=""):
         still = make_scene_still(scene, verbose=CHECK, scene_ref=scene_ref or None)
         if not still:
             log("scene still not built — falling back to his hero"); still = HERO
+    elif kind == "together" and scene.strip():
+        # dynamic 'us': compose the two of them into his described scene (nano holds both), heal the recurring
+        # blonde drift to brunette, then animate. Falls back to the fixed couple base if the compose fails.
+        if DRY:
+            log("[dry] kind=together  SCENE=%r  -> compose us (%s) + brunette heal, then animate (%s)"
+                % (scene[:120], US_COMPOSE_MODEL, model))
+            log("[dry] his motion prompt:\n      %s" % prompt)
+            return "DRY"
+        still = compose_us(scene, verbose=CHECK)
+        if still:
+            heal_hair(still, verbose=CHECK)
+        else:
+            log("us compose failed — falling back to the fixed couple base"); still = select_still("together")
     else:
         still = select_still(kind, still_label)
         if DRY:
