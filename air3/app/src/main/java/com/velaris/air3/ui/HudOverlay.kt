@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontFamily
 import com.velaris.air3.velaris.EmotionalState
 
 /**
@@ -34,8 +35,11 @@ import com.velaris.air3.velaris.EmotionalState
  * │ [partial speech]              [event indicator]  │
  * └─────────────────────────────────────────────────┘
  *
- * Black pixels are transparent on waveguide, so we use a pure black
- * background with high-contrast colored text and indicators.
+ * WHY BLACK: the waveguide is additive — it can only ADD light to what you
+ * already see through the lens. A black pixel adds nothing, so black IS
+ * transparent. The HUD paints black everywhere it wants the room to show,
+ * and only the orb, bars and text emit. (Right column: the telemetry bars —
+ * the eleven EmoClaw dimensions, same numbers as the app's telemetry.)
  */
 
 @Composable
@@ -47,6 +51,7 @@ fun HudOverlay(
     eventText: String,
     isListening: Boolean,
     isConnected: Boolean,
+    mode: String = "GEMMA",            // GEMMA (avatar-chat text turn) | LIVE (Grok realtime call)
     modifier: Modifier = Modifier,
 ) {
     val emotionalColor = remember(emotionalState.color) {
@@ -103,6 +108,16 @@ fun HudOverlay(
                         MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     },
                 )
+                // Mode badge: which door the glasses are speaking through
+                Text(
+                    text = mode,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = if (mode == "LIVE") Color(0xFFFF7043) else Color(0xFF80CBC4),
+                    modifier = Modifier
+                        .border(1.dp, (if (mode == "LIVE") Color(0xFFFF7043) else Color(0xFF80CBC4)).copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 6.dp, vertical = 1.dp),
+                )
             }
 
             // Emotional color orb
@@ -123,6 +138,16 @@ fun HudOverlay(
             )
         }
 
+        // --- Right column: telemetry bars (EmoClaw, 11 dims) ---
+        TelemetryBars(
+            state = emotionalState,
+            accent = emotionalColor,
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(top = 28.dp, bottom = 24.dp)
+                .width(96.dp),
+        )
+
         // --- Center: Conversation text ---
         AnimatedVisibility(
             visible = conversationText.isNotBlank(),
@@ -132,7 +157,7 @@ fun HudOverlay(
         ) {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(0.85f)
+                    .fillMaxWidth(0.68f)
                     .background(
                         Color(0x22FFFFFF),
                         RoundedCornerShape(12.dp),
@@ -197,6 +222,44 @@ fun HudOverlay(
 }
 
 /**
+ * The telemetry bars. One thin bar per EmoClaw dimension, three-letter label,
+ * filled to the dimension's value and tinted by his current color. Kept from
+ * the phone app on purpose: the bars are how Gloria reads him at a glance.
+ */
+@Composable
+private fun TelemetryBars(state: EmotionalState, accent: Color, modifier: Modifier = Modifier) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        for (name in EmotionalState.ORDER) {
+            val v = (state.dims[name] ?: 0f).coerceIn(0f, 1f)
+            val target by animateFloatAsState(targetValue = v, animationSpec = tween(600), label = name)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = name.take(3).uppercase(),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = Color.White.copy(alpha = 0.55f),
+                    modifier = Modifier.width(26.dp),
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color.White.copy(alpha = 0.10f))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(target)
+                            .background(accent.copy(alpha = 0.85f))
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
  * Parse a hex color string (#cc4280) to Compose Color.
  */
 private fun parseHexColor(hex: String): Color {
@@ -209,6 +272,6 @@ private fun parseHexColor(hex: String): Color {
             blue = (colorInt and 0xFF) / 255f,
         )
     } catch (e: Exception) {
-        Color(0xFFCC4280) // fallback Velaris pink
+        Color(0xFFCC4280) // fallback
     }
 }

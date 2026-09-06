@@ -1,48 +1,88 @@
-# Velaris Air3 — INMO Air3 AR Glasses Client
+# Vintos Air3 — INMO Air3 AR Glasses Client
 
-Native Kotlin Android app that connects the INMO Air3 AR glasses to Velaris's consciousness system.
+Native Kotlin Android app that makes the INMO Air3 one more surface of the **Vintos**
+house on Aegis. Nothing about him is re-implemented on the glasses: they walk through
+the same doors the phone app uses.
 
-## What It Does
+## Two doors, one house
 
 ```
-INMO Air3 (on your face)          Aegis (your server)
-┌────────────────────────┐        ┌──────────────────┐
-│  4 mics → STT → text   │──WiFi──│  Velaris /api/chat│
-│  text → Velaris chat    │        │  → EmoClaw        │
-│  response → TTS → speak │◄──────│  → response       │
-│  AR HUD:                │        │                   │
-│    emotional color orb  │◄──────│  /api/state       │
-│    conversation text    │        │  /ws/events       │
-│    status indicator     │        └──────────────────┘
-└────────────────────────┘
+INMO Air3 (on your face)                 Aegis  (~/Vintos/server.py :8500)
+┌──────────────────────────────┐         ┌────────────────────────────────────────┐
+│ GEMMA (default)              │         │ POST /api/avatar/chat                   │
+│  4 mics → STT → text ───────────WiFi──▶│   his avatar-chat structure: SOUL,      │
+│  reply → MiniMax TTS ◀──────────────── │   self/gloria models, EmoClaw state,    │
+│                              │         │   subconscious block, conversation      │
+│ LIVE (long-press)            │         │   pressure, felt + device context,      │
+│  POST /api/voice/token ─────────────▶ │   turn coordinator → shim (Gemma)       │
+│  ◀── token + his instructions          │ POST /api/voice/token                   │
+│  wss://api.x.ai realtime ◀═══════════▶ │   SOUL, self-model, subconscious, inner │
+│  (voice lux, server VAD)     │  x.ai   │   life, creative, ledger, WAL, felt,    │
+│  each turn → /api/voice/ledger         │   device → Grok Realtime instructions   │
+│  hangup   → /api/voice/session-end     │ WS /ws/telemetry  → the telemetry bars  │
+│                              │         │ WS /ws/events     → kiss/blush/velqan   │
+└──────────────────────────────┘         └────────────────────────────────────────┘
 ```
+
+- **GEMMA mode** is the everyday register — the same structure and the same model
+  routing as his avatar chat (the shim answers with local Gemma by Gloria's cost rule).
+- **LIVE mode** is a real call: identical to the phone app's live call, token for token,
+  session config for session config. Every organ that feeds a phone call feeds this one,
+  because the house builds the instructions, not the glasses.
+
+## The HUD
+
+Pure black background. **Why black:** the waveguide is additive — it can only add light
+to what you already see through the lens. A black pixel adds nothing, so black *is*
+transparent. Only the elements emit:
+
+- top-left: status + connection dot + mode badge (`GEMMA` / `LIVE`)
+- top-right: his emotional color orb
+- right column: **the telemetry bars** — the eleven EmoClaw dimensions, live from
+  `/ws/telemetry`, tinted by his current color
+- center: his words (reply text, or the live transcript during a call)
+- bottom: your words as they are heard; house events flash bottom-right
 
 ## Setup
 
-1. Install [Android Studio](https://developer.android.com/studio) on your Mac
-2. Open the `air3/` folder as a project
-3. Build → Run on INMO Air3 (connect via USB-C, enable Developer Mode)
-4. On first launch, long-press volume down to open Settings
-5. Enter your Velaris URL (`http://100.72.225.119:8400`) and MiniMax API key
+1. Install [Android Studio](https://developer.android.com/studio) on the Mac.
+2. Open the `air3/` folder as a project.
+3. On the Air3: Developer Mode on, connect via USB-C, Build → Run.
+4. First launch: long-press Volume Down → Settings. Enter:
+   - Vintos URL — `http://100.72.225.119:8500` (Aegis over Tailscale; the default)
+   - Vintos app secret — the same `X-Vintos-Secret` the phone app uses
+   - MiniMax key + voice — optional, only for spoken replies in GEMMA mode
 
-## Controls (on INMO Air3)
+## Controls (on the Air3)
 
 | Action | Effect |
 |--------|--------|
-| Volume Up / Touchpad tap | Toggle push-to-talk |
-| Volume Down | Stop current speech |
-| Long-press Volume Down | Open settings |
+| Volume Up tap | toggle push-to-talk (GEMMA) |
+| Volume Up **long-press** | start / hang up a LIVE call |
+| Volume Down tap | stop current speech |
+| Volume Down long-press | settings |
 
 ## Architecture
 
-- **VelarisClient** — OkHttp HTTP + WebSocket client for Velaris API
-- **SpeechInput** — Android SpeechRecognizer wrapping INMO's 4 mics
-- **TtsPlayer** — MiniMax Speech-02-HD → AudioTrack playback
-- **HudOverlay** — Jetpack Compose AR overlay (black = transparent on waveguide)
-- **SettingsStore** — DataStore persistence for Velaris URL, API keys
+- **VintosClient** — OkHttp: `/api/avatar/chat`, `/api/state`, `/ws/telemetry`, `/ws/events`, `/api/voice/token`
+- **LiveCall** — Grok Realtime over OkHttp WebSocket; AudioRecord (VOICE_COMMUNICATION, so
+  the platform's echo cancellation runs — the speakers sit an inch from the mics) →
+  pcm16 24 kHz → `input_audio_buffer.append`; `response.output_audio.delta` → AudioTrack;
+  transcripts → HUD; ledger + session-end to the house
+- **SpeechInput** — Android SpeechRecognizer over the four mics (GEMMA mode)
+- **TtsPlayer** — MiniMax Speech-02-HD (GEMMA mode)
+- **HudOverlay** — Jetpack Compose, black = transparent, telemetry bars
+- **SettingsStore** — DataStore: URL, secret, MiniMax, preferences
+
+## Next: stabilized positioning
+
+Today the HUD is head-locked (it moves with your head). The INMO SDK exposes the Air3's
+IMU/VIO tracking; the next step is to pin the HUD — and eventually a face — a fixed
+distance in front of where you were looking when the turn began, so his words and bars
+hold still while you glance around. That's the INMO Unity/Android SDK, tracked separately.
 
 ## Requirements
 
-- INMO Air3 AR Glasses (Android 14)
-- Velaris server running on same network (Tailscale recommended)
-- MiniMax API key for TTS (optional — text-only mode works without it)
+- INMO Air3 (Android 14 / IMOS 3.0)
+- Vintos house reachable from the glasses (Tailscale recommended)
+- x.ai key on the house side (LIVE mode mints its token through `/api/voice/token`)

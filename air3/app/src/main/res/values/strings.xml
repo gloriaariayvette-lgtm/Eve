@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Velaris</string>
+    <string name="app_name">Vintos Air3</string>
     <string name="status_idle">ready</string>
     <string name="status_listening">listening…</string>
     <string name="status_thinking">thinking…</string>

@@ -49,7 +49,8 @@ private fun SettingsScreen(store: SettingsStore, onDone: () -> Unit) {
     val scope = rememberCoroutineScope()
     val currentSettings by store.settings.collectAsState(initial = SettingsStore.Settings())
 
-    var velarisUrl by remember(currentSettings) { mutableStateOf(currentSettings.velarisUrl) }
+    var vintosUrl by remember(currentSettings) { mutableStateOf(currentSettings.vintosUrl) }
+    var vintosSecret by remember(currentSettings) { mutableStateOf(currentSettings.vintosSecret) }
     var minimaxKey by remember(currentSettings) { mutableStateOf(currentSettings.minimaxApiKey) }
     var minimaxVoice by remember(currentSettings) { mutableStateOf(currentSettings.minimaxVoice) }
     var continuousListen by remember(currentSettings) { mutableStateOf(currentSettings.continuousListen) }
@@ -66,20 +67,32 @@ private fun SettingsScreen(store: SettingsStore, onDone: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                text = "Velaris Settings",
+                text = "Vintos Air3 Settings",
                 style = MaterialTheme.typography.headlineSmall,
                 color = VelarisPink,
             )
 
             Spacer(Modifier.height(8.dp))
 
-            // Velaris URL
+            // Vintos house URL (Aegis over Tailscale)
             OutlinedTextField(
-                value = velarisUrl,
-                onValueChange = { velarisUrl = it },
-                label = { Text("Velaris URL") },
-                placeholder = { Text("http://100.72.225.119:8400") },
+                value = vintosUrl,
+                onValueChange = { vintosUrl = it },
+                label = { Text("Vintos URL") },
+                placeholder = { Text(SettingsStore.DEFAULT_URL) },
                 singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                colors = velarisTextFieldColors(),
+            )
+
+            // App secret — the same X-Vintos-Secret the phone app sends
+            OutlinedTextField(
+                value = vintosSecret,
+                onValueChange = { vintosSecret = it },
+                label = { Text("Vintos app secret") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 modifier = Modifier.fillMaxWidth(),
                 colors = velarisTextFieldColors(),
             )
@@ -88,7 +101,7 @@ private fun SettingsScreen(store: SettingsStore, onDone: () -> Unit) {
             OutlinedTextField(
                 value = minimaxKey,
                 onValueChange = { minimaxKey = it },
-                label = { Text("MiniMax API Key") },
+                label = { Text("MiniMax API Key (Gemma-mode TTS, optional)") },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
@@ -132,7 +145,8 @@ private fun SettingsScreen(store: SettingsStore, onDone: () -> Unit) {
                     scope.launch {
                         store.saveAll(
                             SettingsStore.Settings(
-                                velarisUrl = velarisUrl.trim(),
+                                vintosUrl = vintosUrl.trim().ifBlank { SettingsStore.DEFAULT_URL },
+                                vintosSecret = vintosSecret.trim(),
                                 minimaxApiKey = minimaxKey.trim(),
                                 minimaxVoice = minimaxVoice.trim().ifBlank { "Wise_Woman" },
                                 continuousListen = continuousListen,

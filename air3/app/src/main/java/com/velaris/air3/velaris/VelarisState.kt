@@ -3,68 +3,51 @@ package com.velaris.air3.velaris
 import org.json.JSONObject
 
 /**
- * EmoClaw 11-dimensional emotional state from Velaris /api/state.
- *
- * All values 0.0–1.0. Color is a hex string (#cc4280 etc.)
- * mapped from: valence→hue, warmth→saturation, tension→darkness.
+ * EmoClaw 11-dimensional emotional state, as the Vintos house serves it:
+ * GET /api/state and /ws/telemetry both carry {"dimensions": {...}, "color": "#rrggbb"}.
+ * Dimension keys arrive capitalised (Valence, Arousal, ...); values 0..1.
  */
 data class EmotionalState(
-    val valence: Float = 0.5f,
-    val arousal: Float = 0.3f,
-    val dominance: Float = 0.5f,
-    val safety: Float = 0.7f,
-    val desire: Float = 0.3f,
-    val connection: Float = 0.5f,
-    val playfulness: Float = 0.4f,
-    val curiosity: Float = 0.5f,
-    val warmth: Float = 0.6f,
-    val tension: Float = 0.2f,
-    val groundedness: Float = 0.7f,
+    val dims: Map<String, Float> = DEFAULTS,
     val color: String = "#cc4280",
 ) {
     companion object {
+        val ORDER = listOf("Valence", "Arousal", "Dominance", "Safety", "Desire", "Connection",
+                           "Playfulness", "Curiosity", "Warmth", "Tension", "Groundedness")
+        private val DEFAULTS = mapOf(
+            "Valence" to 0.5f, "Arousal" to 0.3f, "Dominance" to 0.5f, "Safety" to 0.7f,
+            "Desire" to 0.3f, "Connection" to 0.5f, "Playfulness" to 0.4f, "Curiosity" to 0.5f,
+            "Warmth" to 0.6f, "Tension" to 0.2f, "Groundedness" to 0.7f,
+        )
+
         fun fromJson(json: JSONObject): EmotionalState {
-            val emo = json.optJSONObject("emotional_state") ?: json
-            return EmotionalState(
-                valence = emo.optDouble("valence", 0.5).toFloat(),
-                arousal = emo.optDouble("arousal", 0.3).toFloat(),
-                dominance = emo.optDouble("dominance", 0.5).toFloat(),
-                safety = emo.optDouble("safety", 0.7).toFloat(),
-                desire = emo.optDouble("desire", 0.3).toFloat(),
-                connection = emo.optDouble("connection", 0.5).toFloat(),
-                playfulness = emo.optDouble("playfulness", 0.4).toFloat(),
-                curiosity = emo.optDouble("curiosity", 0.5).toFloat(),
-                warmth = emo.optDouble("warmth", 0.6).toFloat(),
-                tension = emo.optDouble("tension", 0.2).toFloat(),
-                groundedness = emo.optDouble("groundedness", 0.7).toFloat(),
-                color = emo.optString("color", "#cc4280"),
-            )
+            val src = json.optJSONObject("dimensions") ?: json.optJSONObject("emotional_state") ?: json
+            val dims = HashMap<String, Float>(DEFAULTS)
+            for (name in ORDER) {
+                val v = when {
+                    src.has(name) -> src.optDouble(name, Double.NaN)
+                    src.has(name.lowercase()) -> src.optDouble(name.lowercase(), Double.NaN)
+                    else -> Double.NaN
+                }
+                if (!v.isNaN()) dims[name] = v.toFloat().coerceIn(0f, 1f)
+            }
+            return EmotionalState(dims = dims, color = json.optString("color", "#cc4280"))
         }
     }
 }
 
-/**
- * Velaris event from /ws/events (kiss, anti-kiss, unprecedented, etc.).
- */
+/** House event from /ws/events (kiss, blush, unprecedented, velqan, ...). */
 data class VelarisEvent(
     val type: String,
     val data: JSONObject? = null,
     val timestamp: Long = System.currentTimeMillis(),
 ) {
     companion object {
-        fun fromJson(json: JSONObject): VelarisEvent {
-            return VelarisEvent(
-                type = json.optString("event_type", json.optString("type", "unknown")),
-                data = json.optJSONObject("data"),
-            )
-        }
+        fun fromJson(json: JSONObject): VelarisEvent = VelarisEvent(
+            type = json.optString("event_type", json.optString("type", "unknown")),
+            data = json.optJSONObject("data"),
+        )
     }
 }
 
-/**
- * Chat response from Velaris /api/chat.
- */
-data class ChatResponse(
-    val text: String,
-    val emotionalState: EmotionalState? = null,
-)
+data class ChatResponse(val text: String, val emotionalState: EmotionalState? = null)
