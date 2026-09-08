@@ -6,9 +6,19 @@ are picking this up cold.
 
 ## The hardware, honestly
 
-The INMO Air3 is a **birdbath/waveguide binocular display running Android 14 (IMOS
-3.0)** with an onboard SoC, four microphones, speakers, and IMU. It is not a Quest.
-Three consequences shape every decision below, and none of them are preferences:
+The INMO Air3 is a **binocular MicroOLED display behind a one-dimensional array
+waveguide**, running Android 14 (IMOS 3.0) on a Snapdragon 6 Gen 1 (SM6450, Adreno
+710) with 8 GB RAM, four microphones, stereo speakers, a 660 mAh battery, and
+accelerometer/gyroscope/magnetometer plus ambient-light and wear sensing. Stated
+1920x1080 per eye, 36 degree FOV, 600 nits at-eye. Figures from INMO's hardware
+specification; treat marketing endurance and refresh claims as unverified.
+
+(An earlier version of this document called it "birdbath/waveguide". That was
+wrong — it is an array waveguide, not a birdbath — and the error is recorded here
+rather than quietly deleted.)
+
+It is not a Quest. Three consequences shape every decision below, and none of them
+are preferences:
 
 1. **The display is additive.** The optics can only *add* light to what you already
    see through the lens. There is no black pixel — a black pixel is simply
@@ -21,8 +31,11 @@ Three consequences shape every decision below, and none of them are preferences:
    will read as broken. Design for something that is understood to be a projection.
 
 3. **The compute is a phone's, and it is on your face.** Sustained GPU load is a
-   thermal and battery problem inches from your temple. This is the hard constraint
-   on rendering a full avatar locally, and the reason the split below matters.
+   thermal and battery problem inches from your temple. But note what is *not*
+   established: INMO publishes no sustained GPU wattage, no skin-temperature limit
+   and no workload thermal curve. Nobody has measured this device under an avatar
+   plus a live call. Do not let "mobile means low detail" enter as a premise —
+   it has to be earned by a measurement.
 
 ## What is built (`air3/`)
 
@@ -58,11 +71,24 @@ Air3's IMU/VIO tracking. The step is to pin the HUD, and eventually a face, at a
 fixed distance in front of where you were looking when the turn began, so his words
 hold still while you glance around.
 
-Two honest cautions: 3-DoF IMU drift will make a world-locked object wander unless
-VIO is genuinely available; and a body pinned in the room without depth occlusion
-(see above) will float in front of your furniture. A **body-locked** anchor — held
-at a fixed offset from your torso rather than the world — is the compromise worth
-trying first, because it survives drift and never claims to be standing on the floor.
+**VIO is genuinely exposed**, not merely inferred from the presence of an IMU: the
+official SDK's `ArPoseManager` offers 3-DoF/6-DoF operation with `Start6Dof()` /
+`Stop6Dof()`, pose data, and timestamped grayscale camera frames. Starting 6-DoF
+resets the pose origin, and camera ownership changes with tracking. Requires
+firmware >= v3.4.xxx. The supplied integration is Unity 2022 LTS oriented; a
+supported Kotlin/Filament path still needs qualifying against real firmware.
+
+That proves a vendor implementation exists. It does not prove reliable tracking on
+this pair of glasses, and it establishes nothing about persistent anchors, room
+meshes, furniture recognition, eye tracking or occlusion.
+
+One correction to an earlier version of this document: it recommended a
+**"body-locked" anchor** held at a fixed offset from the torso. **Head tracking
+cannot measure a torso.** There is no torso sensor on these glasses. What is
+actually achievable is a *following anchor* — an upright presentation that lags the
+head with a dead zone and explicit recentering. That is a useful approximation and
+should be called one. Under 3-DoF it is orientation-stabilised at a chosen apparent
+distance; it cannot hold a fixed room position while you walk.
 
 ### 2. His face on the glasses
 
@@ -92,21 +118,70 @@ architectural fork, not a detail:
 | route | what it means | cost |
 |---|---|---|
 | **A. WebView on the glasses** | run `client/` in a WebView on the Air3, pointed at the engine | fastest to try; WebGL on this SoC is the risk, and it doubles the runtimes on-device |
-| **B. Native render** | Filament or SceneView in Kotlin, load the `.glb`, drive bones from the same WebSocket the HUD uses | best thermals and latency; means reimplementing the client's gaze/posture/viseme logic in Kotlin |
+| **B. Native render** | Filament or SceneView in Kotlin, load the `.glb`, drive bones from the same WebSocket the HUD uses | coherent ownership of audio timing, lifecycle, frame scheduling and pose; means implementing animation composition and clip binding in Kotlin. Filament is not a VRM runtime. **Thermal advantage is a hypothesis, unmeasured on this device** |
 | **C. Stream it** | render on Aegis, send frames or a video stream to the glasses | glasses stay dumb and cool; adds latency to a thing whose whole point is presence, and dies without the network |
 
-There is no default answer here and it should not be picked casually. **B** is the
-one that ends well if the engine's behaviour layer can be separated from its
-renderer — which is exactly the refactor worth scoping before writing any Kotlin.
+**Decided: B**, after review — for coherent ownership of rendering, tracking and
+played audio, and because the asset needs no elaborate VRM shaders or spring bones.
+A is retained as the development reference and a measured comparison, not as the
+shipping renderer. C is rejected as a default: no measured requirement justifies
+adding encode/network/decode latency to a thing whose entire point is presence.
 
-### 3. Voice, once there is a face
+There is a credible **fourth route: Unity with INMO's official SDK, UniVRM and
+uLipSync.** Its argument is supported tracking and compositor integration out of the
+box. Its cost is another engine and build stack. If native SDK qualification fails,
+evaluate this before inventing an unsupported compositor.
 
-Both modes currently speak with no mouth attached. The engine already generates
-visemes (`server/voice/viseme.py`) and the client already drives blendshapes
-(`client/src/avatar/lipsync.ts`). Whichever route above is chosen, the viseme
-stream has to reach it — and in LIVE mode the audio never passes through the house
-at all, it goes glasses↔x.ai directly, so visemes for a live call have to be
-derived on-device from the audio being played. That is a genuinely unsolved piece.
+### 3. He has no face to animate
+
+This is the largest single gap and an earlier version of this document understated
+it badly — it described connecting a viseme stream, as though a mouth existed and
+only needed wiring.
+
+Measured directly from `vintos.vrm`:
+
+| | |
+|---|---|
+| morph targets | **0** |
+| VRM expression presets | **none** |
+| VRM lookAt | **none** |
+| jaw bone | **absent** |
+| eye bones | **absent** |
+| geometry | 266,579 triangles, one mesh, three primitives, 52 humanoid bones |
+
+There is nothing for `blink`, `aa`, `happy`, or an eye-look driver to deform. His
+expression is painted into the texture. No routing decision, no renderer choice and
+no streaming architecture changes this: **it is asset authoring**, roughly 10-20
+specialist artist-days, and it blocks any claim of an expressive face.
+
+What must be authored: blink, eye movement or equivalent deformation, jaw and lip
+articulation, mouth interior where needed, and expression controls that preserve
+his likeness — then VRM expression mappings for the browser reference and a
+matching morph-name/index contract for the native renderer. Five vowel shapes make
+a first working mouth; convincing close-up speech also needs lip closure and
+consonant articulation. An amplitude-driven jaw is not a viseme system.
+
+Preserve the existing body rig and all 30 clips. Test the refined mesh unchanged
+before assuming it is too heavy — 266k triangles in one material is not
+self-evidently expensive, and framing only the head does not avoid skinning the
+rest of a single mesh.
+
+### 4. Then: visemes from the audio actually played
+
+`server/voice/viseme.py` estimates visemes from *text, before synthesis*, and
+signals completion after transmission while the browser runs its own clock — which
+can stop the mouth before playback finishes or even begins. It is approximate
+text-derived timing, not audio-derived alignment, and should be relabelled as such.
+
+In LIVE mode the audio never passes through the house at all — it goes
+glasses<->x.ai directly — so articulation must be derived on-device from decoded
+outgoing PCM, stamped in audio-frame coordinates and applied by *played* frames,
+not by packet arrival. On interruption, flush articulation with the audio.
+
+Start with calibrated MFCC classification benchmarked against recordings of the
+intended voices; `uLipSync` and `wLipSync` are the reference implementations, and
+neither is a ready-made Kotlin dependency. RMS volume can drive opening intensity
+and silence detection; it cannot identify phonemes.
 
 ## Where things live
 
