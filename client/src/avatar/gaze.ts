@@ -32,6 +32,9 @@ export class GazeController {
   private vrm: VRM | null = null;
   private lookAtTarget = new THREE.Vector3(0, 1.6, 2.0);
   private currentLookAt = new THREE.Vector3(0, 1.6, 2.0);
+  /** three-vrm's lookAt.target is an Object3D, not a Vector3. This is the
+   *  object it actually tracks; currentLookAt stays the smoothed position. */
+  private lookAtObject = new THREE.Object3D();
   private saccadeOffset = new THREE.Vector3();
 
   // Blink state
@@ -99,9 +102,15 @@ export class GazeController {
     this.currentLookAt.y = damp(this.currentLookAt.y, target.y, 8, dt);
     this.currentLookAt.z = damp(this.currentLookAt.z, target.z, 8, dt);
 
-    // Apply VRM lookAt
+    // Apply VRM lookAt. three-vrm resolves the target's world position each
+    // frame, so the object has to live in the scene graph, not float free.
     if (this.vrm.lookAt) {
-      this.vrm.lookAt.target = this.currentLookAt;
+      this.lookAtObject.position.copy(this.currentLookAt);
+      if (!this.lookAtObject.parent) {
+        (this.vrm.scene.parent ?? this.vrm.scene).add(this.lookAtObject);
+      }
+      this.lookAtObject.updateMatrixWorld();
+      this.vrm.lookAt.target = this.lookAtObject;
     }
 
     // Subtle head turn toward target

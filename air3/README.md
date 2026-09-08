@@ -97,3 +97,16 @@ face renders are in **[../docs/AR-GLASSES.md](../docs/AR-GLASSES.md)**. In short
 - INMO Air3 (Android 14 / IMOS 3.0)
 - Vintos house reachable from the glasses (Tailscale recommended)
 - x.ai key on the house side (LIVE mode mints its token through `/api/voice/token`)
+
+## Before the first build
+
+The Gradle wrapper's launcher scripts and `gradle-wrapper.jar` are not committed —
+only `gradle/wrapper/gradle-wrapper.properties` is. Generate them once, from the
+`air3/` directory:
+
+```bash
+gradle wrapper
+```
+
+Android Studio will also offer to do this when the project is opened. Until it is
+done, `./gradlew` does not exist and command-line builds cannot start.

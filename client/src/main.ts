@@ -400,7 +400,9 @@ animLoop.onUpdate((dt, elapsed) => {
 
   // Update FPS display with quality indicator
   const snap = perfMonitor.getSnapshot();
-  const qualityIndicator = quality.quality === 'high' ? '' : ` [${quality.quality}]`;
+  // AdaptiveQuality exposes the derived settings; the level itself lives on
+  // the monitor's snapshot.
+  const qualityIndicator = snap.qualityLevel === 'high' ? '' : ` [${snap.qualityLevel}]`;
   fpsEl.textContent = `${animLoop.fps} fps${qualityIndicator}`;
 });
 
