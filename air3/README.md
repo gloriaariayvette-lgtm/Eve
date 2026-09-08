@@ -74,12 +74,23 @@ transparent. Only the elements emit:
 - **HudOverlay** — Jetpack Compose, black = transparent, telemetry bars
 - **SettingsStore** — DataStore: URL, secret, MiniMax, preferences
 
-## Next: stabilized positioning
+## Next
 
-Today the HUD is head-locked (it moves with your head). The INMO SDK exposes the Air3's
-IMU/VIO tracking; the next step is to pin the HUD — and eventually a face — a fixed
-distance in front of where you were looking when the turn began, so his words and bars
-hold still while you glance around. That's the INMO Unity/Android SDK, tracked separately.
+The roadmap, the hardware constraints behind it, and the open question of where his
+face renders are in **[../docs/AR-GLASSES.md](../docs/AR-GLASSES.md)**. In short:
+
+1. **Stabilised positioning.** The HUD is head-locked today. The INMO SDK exposes
+   IMU/VIO tracking; the step is to pin it in front of where you were looking when
+   the turn began. Body-locked is likelier to survive drift than world-locked.
+2. **His face.** His rigged avatar already exists — VRM 1.0, 52 bones, 30 retargeted
+   clips — in the `vintos-app` repository on branch `astra/avatar-house` under
+   `website/avatar-models/v2/`. The engine in `client/` already renders exactly that
+   format. What does not exist is the decision about where it renders on the
+   glasses: WebView, native Filament, or streamed from Aegis. That fork is scoped in
+   the AR-GLASSES doc and should not be picked casually.
+3. **Visemes in a live call.** In LIVE mode the audio goes glasses↔x.ai directly and
+   never passes through the house, so mouth shapes have to be derived on-device from
+   the audio being played. Unsolved.
 
 ## Requirements
 
